@@ -1,0 +1,29 @@
+[Unit]
+Description=LAN Discovery Server (LANListener)
+Documentation=https://github.com/lanmon/lanmon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lanmon
+Group=lanmon
+ExecStart=/usr/local/bin/lanmon server
+Restart=on-failure
+RestartSec=10s
+
+# Security hardening
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/lanmon /run/lanmon /etc/lanmon
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RuntimeDirectory=lanmon
+StateDirectory=lanmon
+
+[Install]
+WantedBy=multi-user.target
