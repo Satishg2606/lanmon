@@ -4,6 +4,9 @@ package config
 import (
 	"fmt"
 	"os"
+	"os/user"
+	"path/filepath"
+	"strings"
 	"time"
 
 	toml "github.com/pelletier/go-toml/v2"
@@ -11,25 +14,15 @@ import (
 
 // Config is the top-level configuration structure.
 type Config struct {
-	Agent   AgentConfig   `toml:"agent"`
-	Server  ServerConfig  `toml:"server"`
+	Node    NodeConfig    `toml:"node"`
 	Connect ConnectConfig `toml:"connect"`
 }
 
-// AgentConfig holds settings for the beacon agent.
-type AgentConfig struct {
-	Interface      string `toml:"interface"`
-	MulticastGroup string `toml:"multicast_group"`
+// NodeConfig holds settings for the P2P discovery node.
+type NodeConfig struct {
+	NetworkRange   string `toml:"network_range"`
 	Port           int    `toml:"port"`
 	Interval       string `toml:"interval"`
-	SharedSecret   string `toml:"shared_secret"`
-}
-
-// ServerConfig holds settings for the listener/server.
-type ServerConfig struct {
-	Interface      string `toml:"interface"`
-	MulticastGroup string `toml:"multicast_group"`
-	Port           int    `toml:"port"`
 	SharedSecret   string `toml:"shared_secret"`
 	DBPath         string `toml:"db_path"`
 	RPCSocket      string `toml:"rpc_socket"`
@@ -44,20 +37,20 @@ type ConnectConfig struct {
 	KnownHosts   string `toml:"known_hosts"`
 }
 
-// ParseInterval parses the agent beacon interval string to a time.Duration.
-func (a *AgentConfig) ParseInterval() (time.Duration, error) {
-	if a.Interval == "" {
+// ParseInterval parses the node beacon interval string to a time.Duration.
+func (n *NodeConfig) ParseInterval() (time.Duration, error) {
+	if n.Interval == "" {
 		return 30 * time.Second, nil
 	}
-	return time.ParseDuration(a.Interval)
+	return time.ParseDuration(n.Interval)
 }
 
-// ParseStaleThreshold parses the server stale threshold string to a time.Duration.
-func (s *ServerConfig) ParseStaleThreshold() (time.Duration, error) {
-	if s.StaleThreshold == "" {
+// ParseStaleThreshold parses the node stale threshold string to a time.Duration.
+func (n *NodeConfig) ParseStaleThreshold() (time.Duration, error) {
+	if n.StaleThreshold == "" {
 		return 90 * time.Second, nil
 	}
-	return time.ParseDuration(s.StaleThreshold)
+	return time.ParseDuration(n.StaleThreshold)
 }
 
 // Load reads and parses a TOML config file, applying defaults for unset values.
@@ -73,39 +66,54 @@ func Load(path string) (*Config, error) {
 	}
 
 	applyDefaults(cfg)
+	cfg.expandPaths()
 	return cfg, nil
 }
 
-func applyDefaults(cfg *Config) {
-	// Agent defaults
-	if cfg.Agent.MulticastGroup == "" {
-		cfg.Agent.MulticastGroup = "239.255.0.1"
-	}
-	if cfg.Agent.Port == 0 {
-		cfg.Agent.Port = 5678
-	}
-	if cfg.Agent.Interval == "" {
-		cfg.Agent.Interval = "30s"
-	}
+func (cfg *Config) expandPaths() {
+	cfg.Connect.ServerPubKey = ExpandPath(cfg.Connect.ServerPubKey)
+	cfg.Connect.KnownHosts = ExpandPath(cfg.Connect.KnownHosts)
+	cfg.Node.DBPath = ExpandPath(cfg.Node.DBPath)
+}
 
-	// Server defaults
-	if cfg.Server.MulticastGroup == "" {
-		cfg.Server.MulticastGroup = "239.255.0.1"
+// ExpandPath expands tilde (~) to the user's home directory.
+func ExpandPath(path string) string {
+	if !strings.HasPrefix(path, "~") {
+		return path
 	}
-	if cfg.Server.Port == 0 {
-		cfg.Server.Port = 5678
+	usr, err := user.Current()
+	if err != nil {
+		return path
 	}
-	if cfg.Server.DBPath == "" {
-		cfg.Server.DBPath = "/var/lib/lanmon/hosts.db"
+	if path == "~" {
+		return usr.HomeDir
 	}
-	if cfg.Server.RPCSocket == "" {
-		cfg.Server.RPCSocket = "/run/lanmon/server.sock"
+	if strings.HasPrefix(path, "~/") {
+		return filepath.Join(usr.HomeDir, path[2:])
 	}
-	if cfg.Server.StaleThreshold == "" {
-		cfg.Server.StaleThreshold = "90s"
+	return path
+}
+
+func applyDefaults(cfg *Config) {
+
+	// Node defaults
+	if cfg.Node.Port == 0 {
+		cfg.Node.Port = 5678
 	}
-	if cfg.Server.LogLevel == "" {
-		cfg.Server.LogLevel = "info"
+	if cfg.Node.Interval == "" {
+		cfg.Node.Interval = "30s"
+	}
+	if cfg.Node.DBPath == "" {
+		cfg.Node.DBPath = "/var/lib/lanmon/hosts.db"
+	}
+	if cfg.Node.RPCSocket == "" {
+		cfg.Node.RPCSocket = "/run/lanmon/server.sock"
+	}
+	if cfg.Node.StaleThreshold == "" {
+		cfg.Node.StaleThreshold = "90s"
+	}
+	if cfg.Node.LogLevel == "" {
+		cfg.Node.LogLevel = "info"
 	}
 
 	// Connect defaults
@@ -119,3 +127,4 @@ func applyDefaults(cfg *Config) {
 		cfg.Connect.KnownHosts = "/etc/lanmon/known_hosts"
 	}
 }
+

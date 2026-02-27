@@ -11,17 +11,10 @@ func TestLoad_ValidConfig(t *testing.T) {
 	cfgPath := filepath.Join(dir, "config.toml")
 
 	content := `
-[agent]
-  interface = "eth0"
-  multicast_group = "239.255.0.1"
+[node]
+  network_range = "10.51.240.0/23"
   port = 5678
   interval = "30s"
-  shared_secret = "my-secret"
-
-[server]
-  interface = "eth0"
-  multicast_group = "239.255.0.1"
-  port = 5678
   shared_secret = "my-secret"
   db_path = "/tmp/test.db"
   rpc_socket = "/tmp/test.sock"
@@ -42,17 +35,17 @@ func TestLoad_ValidConfig(t *testing.T) {
 		t.Fatalf("load failed: %v", err)
 	}
 
-	if cfg.Agent.Interface != "eth0" {
-		t.Errorf("Agent.Interface: got %s, want eth0", cfg.Agent.Interface)
+	if cfg.Node.NetworkRange != "10.51.240.0/23" {
+		t.Errorf("Node.NetworkRange: got %s, want 10.51.240.0/23", cfg.Node.NetworkRange)
 	}
-	if cfg.Agent.SharedSecret != "my-secret" {
-		t.Errorf("Agent.SharedSecret: got %s, want my-secret", cfg.Agent.SharedSecret)
+	if cfg.Node.SharedSecret != "my-secret" {
+		t.Errorf("Node.SharedSecret: got %s, want my-secret", cfg.Node.SharedSecret)
 	}
-	if cfg.Server.DBPath != "/tmp/test.db" {
-		t.Errorf("Server.DBPath: got %s, want /tmp/test.db", cfg.Server.DBPath)
+	if cfg.Node.DBPath != "/tmp/test.db" {
+		t.Errorf("Node.DBPath: got %s, want /tmp/test.db", cfg.Node.DBPath)
 	}
-	if cfg.Server.LogLevel != "debug" {
-		t.Errorf("Server.LogLevel: got %s, want debug", cfg.Server.LogLevel)
+	if cfg.Node.LogLevel != "debug" {
+		t.Errorf("Node.LogLevel: got %s, want debug", cfg.Node.LogLevel)
 	}
 	if cfg.Connect.ServerPubKey != "/tmp/id_rsa.pub" {
 		t.Errorf("Connect.ServerPubKey: got %s, want /tmp/id_rsa.pub", cfg.Connect.ServerPubKey)
@@ -65,9 +58,7 @@ func TestLoad_Defaults(t *testing.T) {
 
 	// Minimal config — all defaults should apply
 	content := `
-[agent]
-  shared_secret = "test"
-[server]
+[node]
   shared_secret = "test"
 `
 	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
@@ -79,20 +70,17 @@ func TestLoad_Defaults(t *testing.T) {
 		t.Fatalf("load failed: %v", err)
 	}
 
-	if cfg.Agent.MulticastGroup != "239.255.0.1" {
-		t.Errorf("default MulticastGroup: got %s, want 239.255.0.1", cfg.Agent.MulticastGroup)
+	if cfg.Node.Port != 5678 {
+		t.Errorf("default Port: got %d, want 5678", cfg.Node.Port)
 	}
-	if cfg.Agent.Port != 5678 {
-		t.Errorf("default Port: got %d, want 5678", cfg.Agent.Port)
+	if cfg.Node.Interval != "30s" {
+		t.Errorf("default Interval: got %s, want 30s", cfg.Node.Interval)
 	}
-	if cfg.Agent.Interval != "30s" {
-		t.Errorf("default Interval: got %s, want 30s", cfg.Agent.Interval)
+	if cfg.Node.StaleThreshold != "90s" {
+		t.Errorf("default StaleThreshold: got %s, want 90s", cfg.Node.StaleThreshold)
 	}
-	if cfg.Server.StaleThreshold != "90s" {
-		t.Errorf("default StaleThreshold: got %s, want 90s", cfg.Server.StaleThreshold)
-	}
-	if cfg.Server.LogLevel != "info" {
-		t.Errorf("default LogLevel: got %s, want info", cfg.Server.LogLevel)
+	if cfg.Node.LogLevel != "info" {
+		t.Errorf("default LogLevel: got %s, want info", cfg.Node.LogLevel)
 	}
 }
 
@@ -118,7 +106,7 @@ func TestLoad_InvalidTOML(t *testing.T) {
 }
 
 func TestParseInterval(t *testing.T) {
-	cfg := &AgentConfig{Interval: "10s"}
+	cfg := &NodeConfig{Interval: "10s"}
 	d, err := cfg.ParseInterval()
 	if err != nil {
 		t.Fatalf("parse interval: %v", err)
@@ -129,7 +117,7 @@ func TestParseInterval(t *testing.T) {
 }
 
 func TestParseInterval_Default(t *testing.T) {
-	cfg := &AgentConfig{}
+	cfg := &NodeConfig{}
 	d, err := cfg.ParseInterval()
 	if err != nil {
 		t.Fatalf("parse interval: %v", err)
@@ -140,7 +128,7 @@ func TestParseInterval_Default(t *testing.T) {
 }
 
 func TestParseStaleThreshold(t *testing.T) {
-	cfg := &ServerConfig{StaleThreshold: "120s"}
+	cfg := &NodeConfig{StaleThreshold: "120s"}
 	d, err := cfg.ParseStaleThreshold()
 	if err != nil {
 		t.Fatalf("parse threshold: %v", err)
@@ -149,3 +137,4 @@ func TestParseStaleThreshold(t *testing.T) {
 		t.Errorf("Threshold: got %v, want 120s", d)
 	}
 }
+

@@ -1,0 +1,24 @@
+# lanmon — Server Configuration
+# Machine: 10.51.240.55 (eno1)
+
+[agent]
+  interface       = "eno1"
+  multicast_group = "239.255.0.1"
+  port            = 5678
+  interval        = "30s"
+  shared_secret   = "ae0e843d4991a2351120a9d6d4ea541b4361a3623f2ce48555270f875e1e0025"
+
+[server]
+  interface       = "eno1"
+  multicast_group = "239.255.0.1"
+  port            = 5678
+  shared_secret   = "ae0e843d4991a2351120a9d6d4ea541b4361a3623f2ce48555270f875e1e0025"
+  db_path         = "/var/lib/lanmon/hosts.db"
+  rpc_socket      = "/run/lanmon/server.sock"
+  stale_threshold = "90s"
+  log_level       = "debug"
+
+[connect]
+  rpc_socket     = "/run/lanmon/server.sock"
+  server_pubkey  = "/root/.ssh/id_rsa.pub"
+  known_hosts    = "/etc/lanmon/known_hosts"

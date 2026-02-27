@@ -2,6 +2,7 @@
 package sysinfo
 
 import (
+	"fmt"
 	"math"
 	"net"
 	"os"
@@ -29,9 +30,10 @@ type SystemInfo struct {
 	DiskCount  int
 }
 
-// Collect gathers local system information and returns a SystemInfo struct.
-func Collect() (*SystemInfo, error) {
-	macAddr, ipAddr, err := getPrimaryNetworkInfo()
+// Collect gathers local system information for an interface matching the provided network range.
+// If networkRange is empty, it falls back to the first non-loopback interface.
+func Collect(networkRange string) (*SystemInfo, error) {
+	macAddr, ipAddr, err := getNetworkInfo(networkRange)
 	if err != nil {
 		return nil, err
 	}
@@ -70,8 +72,19 @@ func Collect() (*SystemInfo, error) {
 	return info, nil
 }
 
-// getPrimaryNetworkInfo returns the MAC and IPv4 address of the first non-loopback interface.
-func getPrimaryNetworkInfo() (string, string, error) {
+// getNetworkInfo returns the MAC and IPv4 address of an interface.
+// If networkRange is provided (CIDR), it finds an interface matching that range.
+// Otherwise, it returns the first non-loopback interface.
+func getNetworkInfo(networkRange string) (string, string, error) {
+	var targetNet *net.IPNet
+	if networkRange != "" {
+		_, tn, err := net.ParseCIDR(networkRange)
+		if err != nil {
+			return "", "", fmt.Errorf("parsing network range %s: %w", networkRange, err)
+		}
+		targetNet = tn
+	}
+
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return "", "", err
@@ -88,45 +101,40 @@ func getPrimaryNetworkInfo() (string, string, error) {
 			continue
 		}
 
-		macAddr := iface.HardwareAddr.String()
-
 		addrs, err := iface.Addrs()
 		if err != nil {
 			continue
 		}
 
-		var ipAddr string
 		for _, addr := range addrs {
 			ipNet, ok := addr.(*net.IPNet)
 			if !ok {
 				continue
 			}
-			if ipNet.IP.To4() != nil {
-				ipAddr = ipNet.IP.String()
-				break
+			ip := ipNet.IP.To4()
+			if ip == nil {
+				continue
 			}
-		}
 
-		if ipAddr == "" {
-			for _, addr := range addrs {
-				ipNet, ok := addr.(*net.IPNet)
-				if !ok {
-					continue
+			// If target network provided, check if IP fits
+			if targetNet != nil {
+				if targetNet.Contains(ip) {
+					return iface.HardwareAddr.String(), ip.String(), nil
 				}
-				if ipNet.IP.To16() != nil && !ipNet.IP.IsLinkLocalUnicast() {
-					ipAddr = ipNet.IP.String()
-					break
-				}
+				continue
 			}
-		}
 
-		if ipAddr != "" {
-			return macAddr, ipAddr, nil
+			// No target network, return first non-loopback IPv4
+			return iface.HardwareAddr.String(), ip.String(), nil
 		}
 	}
 
-	return "", "", nil
+	if networkRange != "" {
+		return "", "", fmt.Errorf("no interface found matching network range %s", networkRange)
+	}
+	return "", "", fmt.Errorf("no suitable network interface found")
 }
+
 
 // getOSInfo retrieves OS name and kernel version.
 func getOSInfo() (string, string) {

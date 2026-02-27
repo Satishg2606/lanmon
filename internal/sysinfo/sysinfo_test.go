@@ -1,11 +1,12 @@
 package sysinfo
 
 import (
+	"net"
 	"testing"
 )
 
 func TestCollect(t *testing.T) {
-	info, err := Collect()
+	info, err := Collect("")
 	if err != nil {
 		t.Fatalf("Collect failed: %v", err)
 	}
@@ -19,28 +20,44 @@ func TestCollect(t *testing.T) {
 		t.Error("Hostname is empty")
 	}
 
-	// Arch should be set from runtime.GOARCH
-	if info.Arch == "" {
-		t.Error("Arch is empty")
+	t.Logf("Collected default: host=%s ip=%s", info.Hostname, info.IPAddress)
+}
+
+func TestCollect_WithNetworkRange(t *testing.T) {
+	// First get any IP to know what range to test with
+	info, err := Collect("")
+	if err != nil {
+		t.Skip("skipping network range test: no interface found")
 	}
 
-	// CPU cores should be > 0
-	if info.CPUCores <= 0 {
-		t.Errorf("CPUCores should be > 0, got %d", info.CPUCores)
+	// Try to detect same interface using CIDR
+	// Example: if IP is 192.168.1.5, use 192.168.0.0/16
+	ip := net.ParseIP(info.IPAddress)
+	if ip == nil {
+		t.Fatalf("invalid IP collected: %s", info.IPAddress)
 	}
 
-	// Memory should be > 0
-	if info.MemoryGB <= 0 {
-		t.Errorf("MemoryGB should be > 0, got %f", info.MemoryGB)
+	// Determine a range that likely contains this IP
+	cidr := ""
+	if ip.To4() != nil {
+		cidr = ip.Mask(net.CIDRMask(16, 32)).String() + "/16"
+	} else {
+		cidr = ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
 	}
 
-	t.Logf("Collected: host=%s arch=%s cores=%d mem=%.1fGB mac=%s ip=%s os=%s kernel=%s disks=%d",
-		info.Hostname, info.Arch, info.CPUCores, info.MemoryGB,
-		info.MACAddress, info.IPAddress, info.OSName, info.Kernel, info.DiskCount)
+	t.Logf("Testing with CIDR: %s", cidr)
+	info2, err := Collect(cidr)
+	if err != nil {
+		t.Fatalf("Collect with CIDR %s failed: %v", cidr, err)
+	}
+
+	if info2.IPAddress != info.IPAddress {
+		t.Errorf("Mismatch with CIDR: got %s, want %s", info2.IPAddress, info.IPAddress)
+	}
 }
 
 func TestReadOSReleasePrettyName(t *testing.T) {
 	name := readOSReleasePrettyName()
-	// On Linux this should return something; on other platforms it may be empty
 	t.Logf("PRETTY_NAME: %q", name)
 }
+

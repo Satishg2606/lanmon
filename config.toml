@@ -1,0 +1,38 @@
+# lanmon — P2P Node Discovery Configuration Example
+
+[node]
+  # The network range to monitor (CIDR notation).
+  # The node will automatically detect the local interface in this range.
+  network_range   = "10.51.240.0/23"
+  
+  # UDP port for discovery (default: 5678)
+  port            = 5678
+  
+  # How often to broadcast this node's presence
+  interval        = "10s"
+  
+  # Shared secret for HMAC signing (must be hex string or raw bytes)
+  # Change this to a secure random hex string!
+  shared_secret   = "ae0e843d4991a2351120a9d6d4ea541b4361a3623f2ce48555270f875e1e0025"
+  
+  # Path to host database
+  db_path         = "/var/lib/lanmon/hosts.db"
+  
+  # Path to Unix socket for RPC communication (used by 'connect' command)
+  rpc_socket      = "/run/lanmon/server.sock"
+  
+  # Threshold after which a host is marked as inactive if no beacons received
+  stale_threshold = "90s"
+  
+  # Logging level (debug, info, warn, error)
+  log_level       = "info"
+
+[connect]
+  # Path to RPC socket of the local node
+  rpc_socket     = "/run/lanmon/server.sock"
+  
+  # Path to the SSH public key to distribute
+  server_pubkey  = "~/.ssh/id_rsa.pub"
+  
+  # Path to known_hosts for SSH key verification
+  known_hosts    = "/etc/lanmon/known_hosts"

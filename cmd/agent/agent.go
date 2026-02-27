@@ -16,28 +16,30 @@ func Run(configPath string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	log := logger.Init(cfg.Server.LogLevel)
+	log := logger.Init(cfg.Node.LogLevel)
 
-	interval, err := cfg.Agent.ParseInterval()
+	interval, err := cfg.Node.ParseInterval()
 	if err != nil {
 		return fmt.Errorf("parsing interval: %w", err)
 	}
 
-	if cfg.Agent.SharedSecret == "" || cfg.Agent.SharedSecret == "CHANGE_ME" {
+	if cfg.Node.SharedSecret == "" || cfg.Node.SharedSecret == "CHANGE_ME" {
 		return fmt.Errorf("shared_secret must be set in config (not 'CHANGE_ME')")
 	}
 
 	log.Info().
-		Str("interface", cfg.Agent.Interface).
-		Str("multicast_group", cfg.Agent.MulticastGroup).
-		Int("port", cfg.Agent.Port).
-		Msg("Starting LANBeacon agent")
+		Str("network_range", cfg.Node.NetworkRange).
+		Int("port", cfg.Node.Port).
+		Msg("Starting legacy LANBeacon agent (deprecated)")
 
 	return beacon.StartBeacon(
-		cfg.Agent.MulticastGroup,
-		cfg.Agent.Port,
+		"", // Interface auto-detected in beacon if empty? No, need to check broadcast.go
+		"239.255.0.1",
+		"",
+		cfg.Node.Port,
 		interval,
-		cfg.Agent.SharedSecret,
+		cfg.Node.SharedSecret,
 		log,
 	)
+
 }

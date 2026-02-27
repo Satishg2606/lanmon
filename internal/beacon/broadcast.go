@@ -7,30 +7,61 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/vmihailenco/msgpack/v5"
+	"golang.org/x/net/ipv4"
 
 	"lanmon/internal/sysinfo"
 )
 
 // StartBeacon begins the periodic beacon broadcast loop.
-// It collects system info and sends HMAC-signed MessagePack-encoded packets
-// to the configured UDP multicast group.
-func StartBeacon(multicastGroup string, port int, interval time.Duration, sharedSecret string, log zerolog.Logger) error {
-	addr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf("%s:%d", multicastGroup, port))
+func StartBeacon(ifaceName, multicastGroup string, serverAddress string, port int, interval time.Duration, sharedSecret string, log zerolog.Logger) error {
+	var addrs []*net.UDPAddr
+
+	// Resolve multicast address
+	mAddr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf("%s:%d", multicastGroup, port))
 	if err != nil {
 		return fmt.Errorf("resolving multicast address: %w", err)
 	}
+	addrs = append(addrs, mAddr)
 
-	conn, err := net.DialUDP("udp4", nil, addr)
+	// Resolve optional unicast server address
+	if serverAddress != "" {
+		sAddr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf("%s:%d", serverAddress, port))
+		if err != nil {
+			log.Warn().Err(err).Str("server_address", serverAddress).Msg("Failed to resolve unicast server address")
+		} else {
+			addrs = append(addrs, sAddr)
+			log.Info().Str("server_address", serverAddress).Msg("Unicast discovery enabled")
+		}
+	}
+
+	// Create a UDP connection
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
-		return fmt.Errorf("dialing multicast: %w", err)
+		return fmt.Errorf("listening for UDP: %w", err)
 	}
 	defer conn.Close()
+
+	if ifaceName != "" {
+		iface, err := net.InterfaceByName(ifaceName)
+		if err != nil {
+			return fmt.Errorf("finding interface %s: %w", ifaceName, err)
+		}
+		// ipv4.PacketConn is used for multicast control
+		pc := ipv4.NewPacketConn(conn)
+		if err := pc.SetMulticastInterface(iface); err != nil {
+			log.Warn().Err(err).Msg("Failed to set multicast interface")
+		}
+		if err := pc.SetMulticastTTL(1); err != nil {
+			log.Warn().Err(err).Msg("Failed to set multicast TTL")
+		}
+	}
 
 	if err := conn.SetWriteBuffer(4096); err != nil {
 		log.Warn().Err(err).Msg("Failed to set write buffer")
 	}
 
 	log.Info().
+		Str("interface", ifaceName).
 		Str("multicast_group", multicastGroup).
 		Int("port", port).
 		Dur("interval", interval).
@@ -39,22 +70,25 @@ func StartBeacon(multicastGroup string, port int, interval time.Duration, shared
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	// Send first beacon immediately
-	if err := sendBeacon(conn, sharedSecret, log); err != nil {
-		log.Error().Err(err).Msg("Failed to send initial beacon")
+	// Helper to send to all targets
+	broadcast := func() {
+		for _, a := range addrs {
+			if err := sendBeacon(conn, a, sharedSecret, log); err != nil {
+				log.Error().Err(err).Str("target", a.String()).Msg("Failed to send beacon")
+			}
+		}
 	}
 
+	broadcast()
 	for range ticker.C {
-		if err := sendBeacon(conn, sharedSecret, log); err != nil {
-			log.Error().Err(err).Msg("Failed to send beacon")
-		}
+		broadcast()
 	}
 
 	return nil
 }
 
-func sendBeacon(conn *net.UDPConn, secret string, log zerolog.Logger) error {
-	info, err := sysinfo.Collect()
+func sendBeacon(conn *net.UDPConn, addr *net.UDPAddr, secret string, log zerolog.Logger) error {
+	info, err := sysinfo.Collect("")
 	if err != nil {
 		return fmt.Errorf("collecting system info: %w", err)
 	}
@@ -86,16 +120,15 @@ func sendBeacon(conn *net.UDPConn, secret string, log zerolog.Logger) error {
 	hmacSig := ComputeHMAC(data, secret)
 	packet := append(hmacSig, data...)
 
-	_, err = conn.Write(packet)
+	_, err = conn.WriteToUDP(packet, addr)
 	if err != nil {
-		return fmt.Errorf("writing packet: %w", err)
+		return fmt.Errorf("writing packet to %s: %w", addr, err)
 	}
 
 	log.Debug().
+		Str("target", addr.String()).
 		Str("hostname", payload.Hostname).
-		Str("ip", payload.IPAddress).
-		Str("mac", payload.MACAddress).
-		Int("payload_bytes", len(packet)).
+		Int("bytes", len(packet)).
 		Msg("Beacon sent")
 
 	return nil

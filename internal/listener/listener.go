@@ -9,6 +9,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/vmihailenco/msgpack/v5"
+	"golang.org/x/net/ipv4"
 
 	"lanmon/internal/beacon"
 	"lanmon/internal/store"
@@ -28,6 +29,12 @@ type rateTracker struct {
 
 // StartListener joins the UDP multicast group and processes incoming beacon packets.
 func StartListener(ifaceName, multicastGroup string, port int, sharedSecret string, db *store.Store, log zerolog.Logger) error {
+	group := net.ParseIP(multicastGroup)
+	if group == nil {
+		return fmt.Errorf("invalid multicast group: %s", multicastGroup)
+	}
+
+	// Resolve the interface
 	var iface *net.Interface
 	if ifaceName != "" {
 		var err error
@@ -37,35 +44,34 @@ func StartListener(ifaceName, multicastGroup string, port int, sharedSecret stri
 		}
 	}
 
-	group := net.ParseIP(multicastGroup)
-	if group == nil {
-		return fmt.Errorf("invalid multicast group: %s", multicastGroup)
-	}
-
-	listenAddr := &net.UDPAddr{
-		IP:   group,
+	// Bind to the wildcard address (0.0.0.0) on the specified port.
+	// This allows receiving both unicast and multicast packets.
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{
+		IP:   net.IPv4zero,
 		Port: port,
-	}
-
-	conn, err := net.ListenMulticastUDP("udp4", iface, listenAddr)
+	})
 	if err != nil {
-		return fmt.Errorf("joining multicast group: %w", err)
+		return fmt.Errorf("listening on UDP: %w", err)
 	}
 	defer conn.Close()
+
+	// If a multicast group is specified, join it on the given interface.
+	if group.IsMulticast() {
+		p := ipv4.NewPacketConn(conn)
+		if err := p.JoinGroup(iface, &net.UDPAddr{IP: group}); err != nil {
+			return fmt.Errorf("joining multicast group: %w", err)
+		}
+	}
 
 	if err := conn.SetReadBuffer(maxPacketSize * 10); err != nil {
 		log.Warn().Err(err).Msg("Failed to set read buffer")
 	}
 
 	log.Info().
+		Str("interface", ifaceName).
 		Str("multicast_group", multicastGroup).
 		Int("port", port).
 		Msg("Listener started, waiting for beacons")
-
-	tracker := &rateTracker{
-		counts:    make(map[string]int),
-		resetTime: time.Now().Add(time.Minute),
-	}
 
 	buf := make([]byte, maxPacketSize)
 	for {
@@ -75,20 +81,11 @@ func StartListener(ifaceName, multicastGroup string, port int, sharedSecret stri
 			continue
 		}
 
-		// Rate limiting
-		now := time.Now()
-		if now.After(tracker.resetTime) {
-			tracker.counts = make(map[string]int)
-			tracker.resetTime = now.Add(time.Minute)
-		}
-		srcIP := src.IP.String()
-		tracker.counts[srcIP]++
-		if tracker.counts[srcIP] > maxPacketsPerMin {
-			log.Warn().Str("src_ip", srcIP).Msg("Rate limit exceeded, dropping packet")
-			continue
-		}
+		log.Info().
+			Str("src", src.String()).
+			Int("bytes", n).
+			Msg("Packet received")
 
-		// Copy packet data for goroutine
 		packet := make([]byte, n)
 		copy(packet, buf[:n])
 
@@ -97,58 +94,45 @@ func StartListener(ifaceName, multicastGroup string, port int, sharedSecret stri
 }
 
 func handlePacket(packet []byte, src *net.UDPAddr, secret string, db *store.Store, log zerolog.Logger) {
-	srcIP := src.IP.String()
+	srcAddr := src.String()
 
-	log.Debug().
-		Str("src_ip", srcIP).
-		Int("payload_bytes", len(packet)).
-		Msg("Packet received")
-
-	// Minimum packet size: 32 bytes HMAC + at least 1 byte payload
 	if len(packet) <= beacon.HMACSize {
-		log.Warn().Str("src_ip", srcIP).Msg("Packet too small, discarding")
+		log.Warn().Str("src", srcAddr).Msg("Packet too small")
 		return
 	}
 
-	// Extract HMAC signature and payload
 	sig := packet[:beacon.HMACSize]
 	data := packet[beacon.HMACSize:]
 
-	// Verify HMAC
 	if !beacon.VerifyHMAC(sig, data, secret) {
 		log.Warn().
-			Str("src_ip", srcIP).
-			Str("reason", "HMAC mismatch").
+			Str("src", srcAddr).
 			Msg("HMAC validation failed")
 		return
 	}
 
-	// Deserialise MessagePack payload
 	var payload beacon.BeaconPayload
 	if err := msgpack.Unmarshal(data, &payload); err != nil {
-		log.Warn().
-			Str("src_ip", srcIP).
-			Err(err).
-			Msg("Failed to unmarshal payload")
+		log.Error().Err(err).Str("src", srcAddr).Msg("Failed to unmarshal beacon")
 		return
 	}
 
-	// Validate timestamp — reject packets older than 60 seconds
 	now := time.Now().Unix()
 	if math.Abs(float64(now-payload.Timestamp)) > timestampMaxAge {
 		log.Warn().
-			Str("src_ip", srcIP).
-			Int64("packet_ts", payload.Timestamp).
+			Str("src", srcAddr).
+			Int64("payload_ts", payload.Timestamp).
 			Int64("server_ts", now).
-			Msg("Stale timestamp, discarding packet")
+			Msg("Stale timestamp")
 		return
 	}
 
-	// Upsert record into store
+	log.Info().
+		Str("hostname", payload.Hostname).
+		Str("ip", payload.IPAddress).
+		Msg("New host discovered")
+
 	if err := db.Upsert(payload); err != nil {
-		log.Error().
-			Str("mac", payload.MACAddress).
-			Err(err).
-			Msg("Database write error")
+		log.Error().Err(err).Msg("Database write error")
 	}
 }

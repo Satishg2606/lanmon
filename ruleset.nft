@@ -1,0 +1,610 @@
+table inet firewalld { # progname firewalld
+	flags owner,persist
+
+	ct helper helper-tftp-udp {
+		type "tftp" protocol udp
+		l3proto inet
+	}
+
+	chain mangle_PREROUTING {
+		type filter hook prerouting priority mangle + 10; policy accept;
+		jump mangle_PREROUTING_ZONES
+	}
+
+	chain mangle_PREROUTING_POLICIES_pre {
+		jump mangle_PRE_policy_allow-host-ipv6
+	}
+
+	chain mangle_PREROUTING_ZONES {
+		iifname "virbr0" goto mangle_PRE_libvirt
+		iifname "eno1" goto mangle_PRE_public
+		goto mangle_PRE_public
+	}
+
+	chain mangle_PREROUTING_POLICIES_post {
+	}
+
+	chain nat_PREROUTING {
+		type nat hook prerouting priority dstnat + 10; policy accept;
+		jump nat_PREROUTING_ZONES
+	}
+
+	chain nat_PREROUTING_POLICIES_pre {
+		jump nat_PRE_policy_allow-host-ipv6
+	}
+
+	chain nat_PREROUTING_ZONES {
+		iifname "virbr0" goto nat_PRE_libvirt
+		iifname "eno1" goto nat_PRE_public
+		goto nat_PRE_public
+	}
+
+	chain nat_PREROUTING_POLICIES_post {
+	}
+
+	chain nat_POSTROUTING {
+		type nat hook postrouting priority srcnat + 10; policy accept;
+		jump nat_POSTROUTING_ZONES
+	}
+
+	chain nat_POSTROUTING_POLICIES_pre {
+	}
+
+	chain nat_POSTROUTING_ZONES {
+		oifname "virbr0" goto nat_POST_libvirt
+		oifname "eno1" goto nat_POST_public
+		goto nat_POST_public
+	}
+
+	chain nat_POSTROUTING_POLICIES_post {
+	}
+
+	chain nat_OUTPUT {
+		type nat hook output priority dstnat + 10; policy accept;
+		jump nat_OUTPUT_POLICIES_pre
+		jump nat_OUTPUT_POLICIES_post
+	}
+
+	chain nat_OUTPUT_POLICIES_pre {
+	}
+
+	chain nat_OUTPUT_POLICIES_post {
+	}
+
+	chain filter_PREROUTING {
+		type filter hook prerouting priority filter + 10; policy accept;
+		icmpv6 type { nd-router-advert, nd-neighbor-solicit } accept
+		meta nfproto ipv6 fib saddr . mark . iif oif missing drop
+	}
+
+	chain filter_INPUT {
+		type filter hook input priority filter + 10; policy accept;
+		ct state { established, related } accept
+		ct status dnat accept
+		iifname "lo" accept
+		ct state invalid drop
+		jump filter_INPUT_ZONES
+		reject with icmpx admin-prohibited
+	}
+
+	chain filter_FORWARD {
+		type filter hook forward priority filter + 10; policy accept;
+		ct state { established, related } accept
+		ct status dnat accept
+		iifname "lo" accept
+		ct state invalid drop
+		ip6 daddr { ::/96, ::ffff:0.0.0.0/96, 2002::/24, 2002:a00::/24, 2002:7f00::/24, 2002:a9fe::/32, 2002:ac10::/28, 2002:c0a8::/32, 2002:e000::/19 } reject with icmpv6 addr-unreachable
+		jump filter_FORWARD_ZONES
+		reject with icmpx admin-prohibited
+	}
+
+	chain filter_OUTPUT {
+		type filter hook output priority filter + 10; policy accept;
+		ct state { established, related } accept
+		oifname "lo" accept
+		ip6 daddr { ::/96, ::ffff:0.0.0.0/96, 2002::/24, 2002:a00::/24, 2002:7f00::/24, 2002:a9fe::/32, 2002:ac10::/28, 2002:c0a8::/32, 2002:e000::/19 } reject with icmpv6 addr-unreachable
+		jump filter_OUTPUT_POLICIES_pre
+		jump filter_OUTPUT_POLICIES_post
+	}
+
+	chain filter_INPUT_POLICIES_pre {
+		jump filter_IN_policy_allow-host-ipv6
+	}
+
+	chain filter_INPUT_ZONES {
+		iifname "virbr0" goto filter_IN_libvirt
+		iifname "eno1" goto filter_IN_public
+		goto filter_IN_public
+	}
+
+	chain filter_INPUT_POLICIES_post {
+	}
+
+	chain filter_FORWARD_POLICIES_pre {
+	}
+
+	chain filter_FORWARD_ZONES {
+		iifname "virbr0" goto filter_FWD_libvirt
+		iifname "eno1" goto filter_FWD_public
+		goto filter_FWD_public
+	}
+
+	chain filter_FORWARD_POLICIES_post {
+	}
+
+	chain filter_OUTPUT_POLICIES_pre {
+	}
+
+	chain filter_OUTPUT_POLICIES_post {
+	}
+
+	chain filter_IN_public {
+		jump filter_INPUT_POLICIES_pre
+		jump filter_IN_public_pre
+		jump filter_IN_public_log
+		jump filter_IN_public_deny
+		jump filter_IN_public_allow
+		jump filter_IN_public_post
+		jump filter_INPUT_POLICIES_post
+		meta l4proto { icmp, ipv6-icmp } accept
+		reject with icmpx admin-prohibited
+	}
+
+	chain filter_IN_public_pre {
+	}
+
+	chain filter_IN_public_log {
+	}
+
+	chain filter_IN_public_deny {
+	}
+
+	chain filter_IN_public_allow {
+		tcp dport 22 accept
+		ip6 daddr fe80::/64 udp dport 546 accept
+		tcp dport 9090 accept
+		ip daddr 224.0.0.251 udp dport 5353 accept
+		ip6 daddr ff02::fb udp dport 5353 accept
+		tcp dport 3300 accept
+		tcp dport 6789 accept
+		tcp dport 6800-7568 accept
+		tcp dport 41245 accept
+		tcp dport 8765 accept
+	}
+
+	chain filter_IN_public_post {
+	}
+
+	chain nat_POST_public {
+		jump nat_POSTROUTING_POLICIES_pre
+		jump nat_POST_public_pre
+		jump nat_POST_public_log
+		jump nat_POST_public_deny
+		jump nat_POST_public_allow
+		jump nat_POST_public_post
+		jump nat_POSTROUTING_POLICIES_post
+	}
+
+	chain nat_POST_public_pre {
+	}
+
+	chain nat_POST_public_log {
+	}
+
+	chain nat_POST_public_deny {
+	}
+
+	chain nat_POST_public_allow {
+	}
+
+	chain nat_POST_public_post {
+	}
+
+	chain filter_FWD_public {
+		jump filter_FORWARD_POLICIES_pre
+		jump filter_FWD_public_pre
+		jump filter_FWD_public_log
+		jump filter_FWD_public_deny
+		jump filter_FWD_public_allow
+		jump filter_FWD_public_post
+		jump filter_FORWARD_POLICIES_post
+		reject with icmpx admin-prohibited
+	}
+
+	chain filter_FWD_public_pre {
+	}
+
+	chain filter_FWD_public_log {
+	}
+
+	chain filter_FWD_public_deny {
+	}
+
+	chain filter_FWD_public_allow {
+		oifname "eno1" accept
+	}
+
+	chain filter_FWD_public_post {
+	}
+
+	chain nat_PRE_public {
+		jump nat_PREROUTING_POLICIES_pre
+		jump nat_PRE_public_pre
+		jump nat_PRE_public_log
+		jump nat_PRE_public_deny
+		jump nat_PRE_public_allow
+		jump nat_PRE_public_post
+		jump nat_PREROUTING_POLICIES_post
+	}
+
+	chain nat_PRE_public_pre {
+	}
+
+	chain nat_PRE_public_log {
+	}
+
+	chain nat_PRE_public_deny {
+	}
+
+	chain nat_PRE_public_allow {
+	}
+
+	chain nat_PRE_public_post {
+	}
+
+	chain mangle_PRE_public {
+		jump mangle_PREROUTING_POLICIES_pre
+		jump mangle_PRE_public_pre
+		jump mangle_PRE_public_log
+		jump mangle_PRE_public_deny
+		jump mangle_PRE_public_allow
+		jump mangle_PRE_public_post
+		jump mangle_PREROUTING_POLICIES_post
+	}
+
+	chain mangle_PRE_public_pre {
+	}
+
+	chain mangle_PRE_public_log {
+	}
+
+	chain mangle_PRE_public_deny {
+	}
+
+	chain mangle_PRE_public_allow {
+	}
+
+	chain mangle_PRE_public_post {
+	}
+
+	chain filter_IN_policy_allow-host-ipv6 {
+		jump filter_IN_policy_allow-host-ipv6_pre
+		jump filter_IN_policy_allow-host-ipv6_log
+		jump filter_IN_policy_allow-host-ipv6_deny
+		jump filter_IN_policy_allow-host-ipv6_allow
+		jump filter_IN_policy_allow-host-ipv6_post
+	}
+
+	chain filter_IN_policy_allow-host-ipv6_pre {
+	}
+
+	chain filter_IN_policy_allow-host-ipv6_log {
+	}
+
+	chain filter_IN_policy_allow-host-ipv6_deny {
+	}
+
+	chain filter_IN_policy_allow-host-ipv6_allow {
+		icmpv6 type nd-neighbor-advert accept
+		icmpv6 type nd-neighbor-solicit accept
+		icmpv6 type nd-router-advert accept
+		icmpv6 type nd-redirect accept
+	}
+
+	chain filter_IN_policy_allow-host-ipv6_post {
+	}
+
+	chain nat_PRE_policy_allow-host-ipv6 {
+		jump nat_PRE_policy_allow-host-ipv6_pre
+		jump nat_PRE_policy_allow-host-ipv6_log
+		jump nat_PRE_policy_allow-host-ipv6_deny
+		jump nat_PRE_policy_allow-host-ipv6_allow
+		jump nat_PRE_policy_allow-host-ipv6_post
+	}
+
+	chain nat_PRE_policy_allow-host-ipv6_pre {
+	}
+
+	chain nat_PRE_policy_allow-host-ipv6_log {
+	}
+
+	chain nat_PRE_policy_allow-host-ipv6_deny {
+	}
+
+	chain nat_PRE_policy_allow-host-ipv6_allow {
+	}
+
+	chain nat_PRE_policy_allow-host-ipv6_post {
+	}
+
+	chain mangle_PRE_policy_allow-host-ipv6 {
+		jump mangle_PRE_policy_allow-host-ipv6_pre
+		jump mangle_PRE_policy_allow-host-ipv6_log
+		jump mangle_PRE_policy_allow-host-ipv6_deny
+		jump mangle_PRE_policy_allow-host-ipv6_allow
+		jump mangle_PRE_policy_allow-host-ipv6_post
+	}
+
+	chain mangle_PRE_policy_allow-host-ipv6_pre {
+	}
+
+	chain mangle_PRE_policy_allow-host-ipv6_log {
+	}
+
+	chain mangle_PRE_policy_allow-host-ipv6_deny {
+	}
+
+	chain mangle_PRE_policy_allow-host-ipv6_allow {
+	}
+
+	chain mangle_PRE_policy_allow-host-ipv6_post {
+	}
+
+	chain filter_IN_libvirt {
+		jump filter_INPUT_POLICIES_pre
+		jump filter_IN_libvirt_pre
+		jump filter_IN_libvirt_log
+		jump filter_IN_libvirt_deny
+		jump filter_IN_libvirt_allow
+		jump filter_IN_libvirt_post
+		jump filter_INPUT_POLICIES_post
+		accept
+	}
+
+	chain filter_IN_libvirt_pre {
+	}
+
+	chain filter_IN_libvirt_log {
+	}
+
+	chain filter_IN_libvirt_deny {
+	}
+
+	chain filter_IN_libvirt_allow {
+		udp dport 67 accept
+		udp dport 547 accept
+		tcp dport 53 accept
+		udp dport 53 accept
+		tcp dport 22 accept
+		udp dport 69 ct helper set "helper-tftp-udp"
+		udp dport 69 accept
+		meta l4proto icmp accept
+		meta l4proto ipv6-icmp accept
+	}
+
+	chain filter_IN_libvirt_post {
+		reject
+	}
+
+	chain nat_POST_libvirt {
+		jump nat_POSTROUTING_POLICIES_pre
+		jump nat_POST_libvirt_pre
+		jump nat_POST_libvirt_log
+		jump nat_POST_libvirt_deny
+		jump nat_POST_libvirt_allow
+		jump nat_POST_libvirt_post
+		jump nat_POSTROUTING_POLICIES_post
+	}
+
+	chain nat_POST_libvirt_pre {
+	}
+
+	chain nat_POST_libvirt_log {
+	}
+
+	chain nat_POST_libvirt_deny {
+	}
+
+	chain nat_POST_libvirt_allow {
+	}
+
+	chain nat_POST_libvirt_post {
+	}
+
+	chain filter_FWD_libvirt {
+		jump filter_FORWARD_POLICIES_pre
+		jump filter_FWD_libvirt_pre
+		jump filter_FWD_libvirt_log
+		jump filter_FWD_libvirt_deny
+		jump filter_FWD_libvirt_allow
+		jump filter_FWD_libvirt_post
+		jump filter_FORWARD_POLICIES_post
+		accept
+	}
+
+	chain filter_FWD_libvirt_pre {
+	}
+
+	chain filter_FWD_libvirt_log {
+	}
+
+	chain filter_FWD_libvirt_deny {
+	}
+
+	chain filter_FWD_libvirt_allow {
+	}
+
+	chain filter_FWD_libvirt_post {
+	}
+
+	chain nat_PRE_libvirt {
+		jump nat_PREROUTING_POLICIES_pre
+		jump nat_PRE_libvirt_pre
+		jump nat_PRE_libvirt_log
+		jump nat_PRE_libvirt_deny
+		jump nat_PRE_libvirt_allow
+		jump nat_PRE_libvirt_post
+		jump nat_PREROUTING_POLICIES_post
+	}
+
+	chain nat_PRE_libvirt_pre {
+	}
+
+	chain nat_PRE_libvirt_log {
+	}
+
+	chain nat_PRE_libvirt_deny {
+	}
+
+	chain nat_PRE_libvirt_allow {
+	}
+
+	chain nat_PRE_libvirt_post {
+	}
+
+	chain mangle_PRE_libvirt {
+		jump mangle_PREROUTING_POLICIES_pre
+		jump mangle_PRE_libvirt_pre
+		jump mangle_PRE_libvirt_log
+		jump mangle_PRE_libvirt_deny
+		jump mangle_PRE_libvirt_allow
+		jump mangle_PRE_libvirt_post
+		jump mangle_PREROUTING_POLICIES_post
+	}
+
+	chain mangle_PRE_libvirt_pre {
+	}
+
+	chain mangle_PRE_libvirt_log {
+	}
+
+	chain mangle_PRE_libvirt_deny {
+	}
+
+	chain mangle_PRE_libvirt_allow {
+	}
+
+	chain mangle_PRE_libvirt_post {
+	}
+}
+table ip filter {
+	chain LIBVIRT_INP {
+		iifname "virbr0" udp dport 53 counter packets 175 bytes 12179 accept
+		iifname "virbr0" tcp dport 53 counter packets 0 bytes 0 accept
+		iifname "virbr0" udp dport 67 counter packets 20 bytes 6418 accept
+		iifname "virbr0" tcp dport 67 counter packets 0 bytes 0 accept
+	}
+
+	chain INPUT {
+		type filter hook input priority filter; policy accept;
+		counter packets 854852 bytes 909055614 jump LIBVIRT_INP
+	}
+
+	chain LIBVIRT_OUT {
+		oifname "virbr0" udp dport 53 counter packets 0 bytes 0 accept
+		oifname "virbr0" tcp dport 53 counter packets 0 bytes 0 accept
+		oifname "virbr0" udp dport 68 counter packets 20 bytes 6560 accept
+		oifname "virbr0" tcp dport 68 counter packets 0 bytes 0 accept
+	}
+
+	chain OUTPUT {
+		type filter hook output priority filter; policy accept;
+		counter packets 640526 bytes 255015946 jump LIBVIRT_OUT
+	}
+
+	chain LIBVIRT_FWO {
+		ip saddr 192.168.122.0/24 iifname "virbr0" counter packets 679277 bytes 35757806 accept
+		iifname "virbr0" counter packets 0 bytes 0 reject
+	}
+
+	chain FORWARD {
+		type filter hook forward priority filter; policy accept;
+		counter packets 1729786 bytes 2228989201 jump LIBVIRT_FWX
+		counter packets 1729786 bytes 2228989201 jump LIBVIRT_FWI
+		counter packets 679277 bytes 35757806 jump LIBVIRT_FWO
+	}
+
+	chain LIBVIRT_FWI {
+		ip daddr 192.168.122.0/24 oifname "virbr0" ct state related,established counter packets 1050509 bytes 2193231395 accept
+		oifname "virbr0" counter packets 0 bytes 0 reject
+	}
+
+	chain LIBVIRT_FWX {
+		iifname "virbr0" oifname "virbr0" counter packets 0 bytes 0 accept
+	}
+}
+table ip nat {
+	chain LIBVIRT_PRT {
+		ip saddr 192.168.122.0/24 ip daddr 224.0.0.0/24 counter packets 4 bytes 251 return
+		ip saddr 192.168.122.0/24 ip daddr 255.255.255.255 counter packets 1 bytes 328 return
+		ip saddr 192.168.122.0/24 ip daddr != 192.168.122.0/24 ip protocol tcp counter packets 61 bytes 3660 masquerade to :1024-65535
+		ip saddr 192.168.122.0/24 ip daddr != 192.168.122.0/24 ip protocol udp counter packets 16 bytes 1216 masquerade to :1024-65535
+		ip saddr 192.168.122.0/24 ip daddr != 192.168.122.0/24 counter packets 0 bytes 0 masquerade
+	}
+
+	chain POSTROUTING {
+		type nat hook postrouting priority srcnat; policy accept;
+		counter packets 2404 bytes 168475 jump LIBVIRT_PRT
+	}
+}
+table ip mangle {
+	chain LIBVIRT_PRT {
+		oifname "virbr0" udp dport 68 counter packets 21 bytes 6888 xt target "CHECKSUM"
+	}
+
+	chain POSTROUTING {
+		type filter hook postrouting priority mangle; policy accept;
+		counter packets 2370279 bytes 2484003721 jump LIBVIRT_PRT
+	}
+}
+table ip6 filter {
+	chain LIBVIRT_INP {
+	}
+
+	chain INPUT {
+		type filter hook input priority filter; policy accept;
+		counter packets 48 bytes 9360 jump LIBVIRT_INP
+	}
+
+	chain LIBVIRT_OUT {
+	}
+
+	chain OUTPUT {
+		type filter hook output priority filter; policy accept;
+		counter packets 169 bytes 17424 jump LIBVIRT_OUT
+	}
+
+	chain LIBVIRT_FWO {
+	}
+
+	chain FORWARD {
+		type filter hook forward priority filter; policy accept;
+		counter packets 0 bytes 0 jump LIBVIRT_FWX
+		counter packets 0 bytes 0 jump LIBVIRT_FWI
+		counter packets 0 bytes 0 jump LIBVIRT_FWO
+	}
+
+	chain LIBVIRT_FWI {
+	}
+
+	chain LIBVIRT_FWX {
+	}
+}
+table ip6 nat {
+	chain LIBVIRT_PRT {
+	}
+
+	chain POSTROUTING {
+		type nat hook postrouting priority srcnat; policy accept;
+		counter packets 8 bytes 1608 jump LIBVIRT_PRT
+	}
+}
+table ip6 mangle {
+	chain LIBVIRT_PRT {
+	}
+
+	chain POSTROUTING {
+		type filter hook postrouting priority mangle; policy accept;
+		counter packets 215 bytes 26632 jump LIBVIRT_PRT
+	}
+}

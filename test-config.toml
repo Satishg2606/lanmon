@@ -1,0 +1,45 @@
+# lanmon — LAN Discovery & SSH Key Exchange System
+# Example configuration file
+# Copy to /etc/lanmon/config.toml and edit before use.
+
+# ─── Agent configuration (for hosts running 'lanmon agent') ───────────────────
+[agent]
+  # Network interface to bind and query for system info
+  interface       = "virbr0"
+  # UDP multicast group (RFC 2365, organisation-local scope)
+  multicast_group = "239.255.0.1"
+  # UDP port for beacon broadcast
+  port            = 5678
+  # Beacon broadcast interval
+  interval        = "30s"
+  # HMAC-SHA256 shared secret — MUST match server config
+  # Generate with: ./scripts/keygen.sh
+  shared_secret   = "ae0e843d4991a2351120a9d6d4ea541b4361a3623f2ce48555270f875e1e0025"
+
+# ─── Server configuration (for the host running 'lanmon server') ──────────────
+[server]
+  # Network interface to join multicast group on
+  interface       = "virbr0"
+  # Must match agent multicast_group
+  multicast_group = "239.255.0.1"
+  # Must match agent port
+  port            = 5678
+  # Must match agent shared_secret
+  shared_secret   = "ae0e843d4991a2351120a9d6d4ea541b4361a3623f2ce48555270f875e1e0025"
+  # Path to BoltDB database file
+  db_path         = "/var/lib/lanmon/hosts.db"
+  # Unix socket for IPC with 'lanmon connect'
+  rpc_socket      = "/run/lanmon/server.sock"
+  # Mark host inactive if no beacon received within this duration
+  stale_threshold = "90s"
+  # Log level: debug | info | warn | error
+  log_level       = "debug"
+
+# ─── Connect configuration (for 'lanmon connect' on the management server) ────
+[connect]
+  # Unix socket to reach the running server
+  rpc_socket     = "/run/lanmon/server.sock"
+  # Path to server's SSH public key to push to targets
+  server_pubkey  = "/root/.ssh/id_rsa.pub"
+  # Known hosts file for SSH host key verification
+  known_hosts    = "/etc/lanmon/known_hosts"
