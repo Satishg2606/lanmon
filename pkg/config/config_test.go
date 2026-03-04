@@ -12,7 +12,7 @@ func TestLoad_ValidConfig(t *testing.T) {
 
 	content := `
 [node]
-  network_range = "10.51.240.0/23"
+  network_ranges = ["10.51.240.0/23"]
   port = 5678
   interval = "30s"
   shared_secret = "my-secret"
@@ -35,8 +35,8 @@ func TestLoad_ValidConfig(t *testing.T) {
 		t.Fatalf("load failed: %v", err)
 	}
 
-	if cfg.Node.NetworkRange != "10.51.240.0/23" {
-		t.Errorf("Node.NetworkRange: got %s, want 10.51.240.0/23", cfg.Node.NetworkRange)
+	if len(cfg.Node.NetworkRanges) != 1 || cfg.Node.NetworkRanges[0] != "10.51.240.0/23" {
+		t.Errorf("Node.NetworkRanges: got %v, want [10.51.240.0/23]", cfg.Node.NetworkRanges)
 	}
 	if cfg.Node.SharedSecret != "my-secret" {
 		t.Errorf("Node.SharedSecret: got %s, want my-secret", cfg.Node.SharedSecret)

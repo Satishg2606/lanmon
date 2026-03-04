@@ -8,7 +8,8 @@ import (
 )
 
 const defaultConfigTemplate = `[node]
-  network_range   = "10.51.240.0/23"
+  # Network ranges to monitor (CIDR notation). Add multiple subnets as needed.
+  network_ranges  = ["10.51.240.0/23"]
   port            = 5678
   interval        = "30s"
   shared_secret   = "CHANGE_ME"
@@ -20,6 +21,7 @@ const defaultConfigTemplate = `[node]
 [connect]
   rpc_socket     = "/run/lanmon/server.sock"
   server_pubkey  = "~/.ssh/id_rsa.pub"
+  # LANmon's own known_hosts file (separate from ~/.ssh/known_hosts)
   known_hosts    = "/etc/lanmon/known_hosts"
 `
 

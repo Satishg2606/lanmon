@@ -28,7 +28,7 @@ func Run(configPath string) error {
 	}
 
 	log.Info().
-		Str("network_range", cfg.Node.NetworkRange).
+		Strs("network_ranges", cfg.Node.NetworkRanges).
 		Int("port", cfg.Node.Port).
 		Msg("Starting legacy LANBeacon agent (deprecated)")
 

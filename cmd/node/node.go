@@ -30,8 +30,8 @@ func Run(configPath string) error {
 		return fmt.Errorf("shared_secret must be set in config (not 'CHANGE_ME')")
 	}
 
-	if cfg.Node.NetworkRange == "" {
-		return fmt.Errorf("network_range must be set in config (e.g. '10.51.240.0/23')")
+	if len(cfg.Node.NetworkRanges) == 0 {
+		return fmt.Errorf("network_ranges must be set in config (e.g. ['10.51.240.0/23'])")
 	}
 
 	// Ensure database directory exists
@@ -77,14 +77,14 @@ func Run(configPath string) error {
 
 	log.Info().
 		Str("db_path", cfg.Node.DBPath).
-		Str("network_range", cfg.Node.NetworkRange).
+		Strs("network_ranges", cfg.Node.NetworkRanges).
 		Msg("Starting LANNode P2P Discovery")
 
 	// Start discovery in a goroutine
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- discovery.StartNode(
-			cfg.Node.NetworkRange,
+			cfg.Node.NetworkRanges,
 			cfg.Node.Port,
 			interval,
 			cfg.Node.SharedSecret,

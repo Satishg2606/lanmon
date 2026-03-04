@@ -93,8 +93,10 @@ func Run(configPath string) error {
 		}
 	}
 
+	knownHostsPath := cfg.Connect.KnownHosts
+
 	// Try a quick passwordless probe — if it works, just connect
-	if canSSHWithoutPassword(username, selectedHost.Beacon.IPAddress) {
+	if canSSHWithoutPassword(username, selectedHost.Beacon.IPAddress, knownHostsPath) {
 		fmt.Printf("\n✓ Passwordless SSH already configured — connecting to %s@%s ...\n\n",
 			username, selectedHost.Beacon.IPAddress)
 		// Mark in DB in case it wasn't marked yet
@@ -103,7 +105,7 @@ func Run(configPath string) error {
 				log.Warn().Err(err).Msg("Failed to update key push status in database")
 			}
 		}
-		return execSSH(username, selectedHost.Beacon.IPAddress)
+		return execSSH(username, selectedHost.Beacon.IPAddress, knownHostsPath)
 	}
 
 	// Passwordless didn't work — we need to push the key first
@@ -149,7 +151,7 @@ func Run(configPath string) error {
 	fmt.Printf("\n✓ SSH key pushed to %s@%s — connecting now ...\n\n",
 		username, selectedHost.Beacon.IPAddress)
 
-	return execSSH(username, selectedHost.Beacon.IPAddress)
+	return execSSH(username, selectedHost.Beacon.IPAddress, knownHostsPath)
 }
 
 // generateSSHKey checks if a key exists and, if not, generates one.
@@ -181,12 +183,14 @@ func generateSSHKey(pubKeyPath string, reader *bufio.Reader) error {
 }
 
 // canSSHWithoutPassword tests if passwordless SSH works by attempting a quick connection.
-func canSSHWithoutPassword(user, host string) bool {
+// Uses LANmon's own known_hosts file to avoid polluting the user's ~/.ssh/known_hosts.
+func canSSHWithoutPassword(user, host, knownHostsPath string) bool {
 	cmd := exec.Command("ssh",
 		"-o", "BatchMode=yes",
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "ConnectTimeout=5",
 		"-o", "LogLevel=ERROR",
+		"-o", fmt.Sprintf("UserKnownHostsFile=%s", knownHostsPath),
 		fmt.Sprintf("%s@%s", user, host),
 		"exit",
 	)
@@ -194,18 +198,28 @@ func canSSHWithoutPassword(user, host string) bool {
 }
 
 // execSSH replaces the current process with an interactive SSH session.
-func execSSH(user, host string) error {
+// Uses LANmon's own known_hosts file.
+func execSSH(user, host, knownHostsPath string) error {
 	sshBin, err := exec.LookPath("ssh")
+	knownHostsOpt := fmt.Sprintf("UserKnownHostsFile=%s", knownHostsPath)
 	if err != nil {
 		// Fall back to non-exec mode
-		cmd := exec.Command("ssh", fmt.Sprintf("%s@%s", user, host))
+		cmd := exec.Command("ssh",
+			"-o", knownHostsOpt,
+			"-o", "StrictHostKeyChecking=no",
+			fmt.Sprintf("%s@%s", user, host),
+		)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
 	}
 	// Use syscall.Exec to replace the process so the terminal feels native
-	args := []string{"ssh", fmt.Sprintf("%s@%s", user, host)}
+	args := []string{"ssh",
+		"-o", knownHostsOpt,
+		"-o", "StrictHostKeyChecking=no",
+		fmt.Sprintf("%s@%s", user, host),
+	}
 	return syscall.Exec(sshBin, args, os.Environ())
 }
 

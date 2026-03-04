@@ -20,14 +20,14 @@ type Config struct {
 
 // NodeConfig holds settings for the P2P discovery node.
 type NodeConfig struct {
-	NetworkRange   string `toml:"network_range"`
-	Port           int    `toml:"port"`
-	Interval       string `toml:"interval"`
-	SharedSecret   string `toml:"shared_secret"`
-	DBPath         string `toml:"db_path"`
-	RPCSocket      string `toml:"rpc_socket"`
-	StaleThreshold string `toml:"stale_threshold"`
-	LogLevel       string `toml:"log_level"`
+	NetworkRanges  []string `toml:"network_ranges"`
+	Port           int      `toml:"port"`
+	Interval       string   `toml:"interval"`
+	SharedSecret   string   `toml:"shared_secret"`
+	DBPath         string   `toml:"db_path"`
+	RPCSocket      string   `toml:"rpc_socket"`
+	StaleThreshold string   `toml:"stale_threshold"`
+	LogLevel       string   `toml:"log_level"`
 }
 
 // ConnectConfig holds settings for the SSH key distributor.
