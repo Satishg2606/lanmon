@@ -16,7 +16,7 @@ func Run(configPath string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	log := logger.Init(cfg.Node.LogLevel)
+	log := logger.Init(cfg.Node.LogLevel, cfg.Node.LogFile)
 
 	interval, err := cfg.Node.ParseInterval()
 	if err != nil {

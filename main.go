@@ -12,9 +12,11 @@ import (
 	"os"
 
 	"lanmon/cmd/agent"
+	"lanmon/cmd/cluster"
 	"lanmon/cmd/connect"
 	"lanmon/cmd/node"
 	"lanmon/cmd/server"
+	"lanmon/cmd/service"
 )
 
 const (
@@ -77,6 +79,10 @@ func main() {
 		err = server.Run(configPath)
 	case "connect":
 		err = connect.Run(configPath)
+	case "cluster":
+		err = cluster.Run(configPath, args[1:])
+	case "service":
+		err = service.Run(configPath, args[1:])
 	case "edit":
 		err = node.EditConfig(configPath)
 	case "version":
@@ -106,6 +112,8 @@ Usage:
 Commands:
   node     Start the P2P discovery node (broadcasts & listens)
   connect  Launch the LANConnect SSH key distributor (interactive)
+  cluster  Manage cluster nodes (add, list, remove, remove-self)
+  service  Manage the lanmon systemd service (start, stop, restart, status)
   edit     Edit the configuration file in your system editor
   version  Print version information
   help     Show this help message
@@ -117,6 +125,9 @@ Examples:
   lanmon node                           # Start P2P node with default config
   lanmon edit                           # Edit configuration
   lanmon connect                        # Interactive SSH key push
+  lanmon cluster add 1                  # Add first discovered node to cluster
+  lanmon cluster remove-self            # Remove self from cluster (with isolation)
+  lanmon service restart                # Restart the lanmon service
 
 `, version, defaultSystemPath)
 }

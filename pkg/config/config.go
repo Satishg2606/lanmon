@@ -28,6 +28,7 @@ type NodeConfig struct {
 	RPCSocket      string   `toml:"rpc_socket"`
 	StaleThreshold string   `toml:"stale_threshold"`
 	LogLevel       string   `toml:"log_level"`
+	LogFile        string   `toml:"log_file"`
 }
 
 // ConnectConfig holds settings for the SSH key distributor.
@@ -35,6 +36,9 @@ type ConnectConfig struct {
 	RPCSocket    string `toml:"rpc_socket"`
 	ServerPubKey string `toml:"server_pubkey"`
 	KnownHosts   string `toml:"known_hosts"`
+	ClusterKey   string `toml:"cluster_key"`
+	LanmonBin    string `toml:"lanmon_bin"`
+	ServiceName  string `toml:"service_name"`
 }
 
 // ParseInterval parses the node beacon interval string to a time.Duration.
@@ -73,7 +77,9 @@ func Load(path string) (*Config, error) {
 func (cfg *Config) expandPaths() {
 	cfg.Connect.ServerPubKey = ExpandPath(cfg.Connect.ServerPubKey)
 	cfg.Connect.KnownHosts = ExpandPath(cfg.Connect.KnownHosts)
+	cfg.Connect.ClusterKey = ExpandPath(cfg.Connect.ClusterKey)
 	cfg.Node.DBPath = ExpandPath(cfg.Node.DBPath)
+	cfg.Node.LogFile = ExpandPath(cfg.Node.LogFile)
 }
 
 // ExpandPath expands tilde (~) to the user's home directory.
@@ -125,6 +131,15 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Connect.KnownHosts == "" {
 		cfg.Connect.KnownHosts = "/etc/lanmon/known_hosts"
+	}
+	if cfg.Connect.ClusterKey == "" {
+		cfg.Connect.ClusterKey = "/etc/lanmon/cluster_id_rsa"
+	}
+	if cfg.Connect.LanmonBin == "" {
+		cfg.Connect.LanmonBin = "lanmon"
+	}
+	if cfg.Connect.ServiceName == "" {
+		cfg.Connect.ServiceName = "lanmon"
 	}
 }
 

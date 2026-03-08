@@ -27,7 +27,7 @@ func Run(configPath string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	log := logger.Init(cfg.Node.LogLevel)
+	log := logger.Init(cfg.Node.LogLevel, cfg.Node.LogFile)
 
 	// Connect to RPC server
 	client, err := rpc.NewClient(cfg.Connect.RPCSocket)

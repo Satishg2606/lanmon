@@ -8,9 +8,11 @@ import (
 	"syscall"
 	"time"
 
+	"lanmon/internal/cluster"
 	"lanmon/internal/discovery"
 	"lanmon/internal/hosts"
 	"lanmon/internal/rpc"
+	"lanmon/internal/sysinfo"
 
 	"lanmon/internal/store"
 	"lanmon/pkg/config"
@@ -24,7 +26,7 @@ func Run(configPath string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	log := logger.Init(cfg.Node.LogLevel)
+	log := logger.Init(cfg.Node.LogLevel, cfg.Node.LogFile)
 
 	if cfg.Node.SharedSecret == "" || cfg.Node.SharedSecret == "CHANGE_ME" {
 		return fmt.Errorf("shared_secret must be set in config (not 'CHANGE_ME')")
@@ -65,9 +67,45 @@ func Run(configPath string) error {
 	}
 	db.RunExpiry(5*time.Second, staleThreshold)
 
+	// Start cluster quorum loop (every 15 seconds)
+	removedCh := db.RunQuorum(15 * time.Second)
+
+	// Get local MAC for cleanup decisions
+	localMAC := ""
+	if len(cfg.Node.NetworkRanges) > 0 {
+		info, err := sysinfo.Collect(cfg.Node.NetworkRanges[0])
+		if err == nil {
+			localMAC = info.MACAddress
+		}
+	}
+
+	// Background goroutine to handle cleanup when nodes are removed by quorum
+	go func() {
+		for removedMACs := range removedCh {
+			// Build a map of MAC -> IP from the database
+			allHosts, err := db.GetAll()
+			if err != nil {
+				log.Error().Err(err).Msg("Failed to get hosts for cleanup")
+				continue
+			}
+			hostMap := make(map[string]string)
+			for _, h := range allHosts {
+				hostMap[h.Beacon.MACAddress] = h.Beacon.IPAddress
+			}
+
+			cluster.HandleRemovedNodes(removedMACs, hostMap, localMAC, cfg.Connect.ClusterKey, log)
+		}
+	}()
+
 	// Start RPC server (for 'lanmon connect' to query this node)
-	if err := rpc.StartServer(cfg.Node.RPCSocket, db, log); err != nil {
+	if err := rpc.StartServer(cfg.Node.RPCSocket, db, log, cfg.Node.SharedSecret, cfg.Connect.ClusterKey); err != nil {
 		return fmt.Errorf("starting RPC server: %w", err)
+	}
+
+	// Start Network RPC server (for inter-node key distribution)
+	// Default to port 9876 for now
+	if err := rpc.StartNetworkServer(":9876", db, log, cfg.Node.SharedSecret, cfg.Connect.ClusterKey); err != nil {
+		log.Warn().Err(err).Msg("Failed to start network RPC server (inter-node sync may fail)")
 	}
 
 	interval, err := cfg.Node.ParseInterval()
@@ -83,6 +121,9 @@ func Run(configPath string) error {
 	// Start discovery in a goroutine
 	errCh := make(chan error, 1)
 	go func() {
+		// Start watcher for cluster assignment
+		go discovery.WatchForClusterAssignment(db, cfg.Node.SharedSecret, cfg.Connect.ClusterKey, cfg.Connect.KnownHosts, log)
+
 		errCh <- discovery.StartNode(
 			cfg.Node.NetworkRanges,
 			cfg.Node.Port,

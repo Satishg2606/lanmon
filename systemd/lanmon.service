@@ -1,0 +1,29 @@
+[Unit]
+Description=LANmon P2P Node Discovery Service
+Documentation=https://github.com/Satishg2606/lanmon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/lanmon node --config /etc/lanmon/config.toml
+ExecReload=/bin/kill -HUP $MAINPID
+WorkingDirectory=/etc/lanmon
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+
+# State and runtime directories
+RuntimeDirectory=lanmon
+RuntimeDirectoryMode=0755
+StateDirectory=lanmon
+StateDirectoryMode=0700
+
+# Allow read/write to lanmon data paths
+ReadWritePaths=/var/lib/lanmon /run/lanmon /etc/lanmon /root/.ssh
+
+[Install]
+WantedBy=multi-user.target

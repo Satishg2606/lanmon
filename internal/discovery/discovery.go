@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"os"
 	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/vmihailenco/msgpack/v5"
 
 	"lanmon/internal/beacon"
+	"lanmon/internal/cluster"
 	"lanmon/internal/hosts"
 	"lanmon/internal/store"
 	"lanmon/internal/sysinfo"
@@ -90,6 +92,28 @@ func StartNode(networkRanges []string, port int, interval time.Duration, secret 
 		Dur("interval", interval).
 		Msg("P2P Discovery node started")
 
+	// Pre-populate DB with local ranges for visibility in local 'cluster list'
+	for _, t := range targets {
+		payload := beacon.BeaconPayload{
+			Timestamp:  time.Now().Unix(),
+			MACAddress: t.info.MACAddress,
+			IPAddress:  t.info.IPAddress,
+			Hostname:   t.info.Hostname,
+			OS: beacon.OSInfo{
+				Name:   t.info.OSName,
+				Kernel: t.info.Kernel,
+				Arch:   t.info.Arch,
+			},
+			Hardware: beacon.HWInfo{
+				CPUModel:  t.info.CPUModel,
+				CPUCores:  t.info.CPUCores,
+				MemoryGB:  t.info.MemoryGB,
+				DiskCount: t.info.DiskCount,
+			},
+		}
+		db.Upsert(payload)
+	}
+
 	// Start listener
 	go listen(conn, selfMACSet, secret, db, log)
 
@@ -98,27 +122,100 @@ func StartNode(networkRanges []string, port int, interval time.Duration, secret 
 	defer ticker.Stop()
 
 	// Initial broadcast on all ranges
-	broadcastAll(conn, targets, secret, log)
+	broadcastAll(conn, targets, secret, db, log)
 
 	for range ticker.C {
-		broadcastAll(conn, targets, secret, log)
+		broadcastAll(conn, targets, secret, db, log)
 	}
 
 	return nil
 }
 
-func broadcastAll(conn *net.UDPConn, targets []rangeTarget, secret string, log zerolog.Logger) {
-	for _, t := range targets {
-		broadcastOne(conn, t, secret, log)
+// WatchForClusterAssignment monitors the local store and triggers a key pull
+// if the node is marked as part of a cluster but lacks the cluster keys.
+// It also ensures known_hosts is kept in sync for all cluster members.
+func WatchForClusterAssignment(db *store.Store, sharedSecret, clusterKeyPath, knownHostsPath string, log zerolog.Logger) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	// Initial check
+	checkClusterProvisioning(db, sharedSecret, clusterKeyPath, knownHostsPath, log)
+
+	for range ticker.C {
+		checkClusterProvisioning(db, sharedSecret, clusterKeyPath, knownHostsPath, log)
 	}
 }
 
-func broadcastOne(conn *net.UDPConn, target rangeTarget, secret string, log zerolog.Logger) {
+func checkClusterProvisioning(db *store.Store, sharedSecret, clusterKeyPath, knownHostsPath string, log zerolog.Logger) {
+	// 1. Get local system info
+	info, err := sysinfo.Collect("")
+	if err != nil {
+		return
+	}
+
+	// 2. Check if local node is marked as in cluster
+	all, _ := db.GetAll()
+	var selfRecord *store.HostRecord
+	for _, r := range all {
+		if r.Beacon.MACAddress == info.MACAddress {
+			selfRecord = &r
+			break
+		}
+	}
+
+	if selfRecord == nil || !selfRecord.IsInCluster {
+		return
+	}
+
+	// 3. Always sync known_hosts for active cluster members
+	var clusterMembers []store.HostRecord
+	for _, r := range all {
+		if r.IsInCluster {
+			clusterMembers = append(clusterMembers, r)
+		}
+	}
+	cluster.SyncClusterKnownHosts(clusterMembers, knownHostsPath, log)
+
+	// 4. Check if we already have the keys
+	if _, err := os.Stat(clusterKeyPath); err == nil {
+		return
+	}
+
+	log.Warn().Msg("Node is marked in cluster but lacks cluster keys. Attempting to pull from peers...")
+
+	// 5. Find an active peer that IS in the cluster to pull from
+	for _, r := range all {
+		if r.Beacon.MACAddress == info.MACAddress {
+			continue
+		}
+		if r.Active && r.IsInCluster {
+			log.Info().Str("peer", r.Beacon.Hostname).Str("ip", r.Beacon.IPAddress).Msg("Attempting to pull keys from peer...")
+			// Network RPC on port 9876
+			err := cluster.ProvisionClusterKeys(r.Beacon.IPAddress, 9876, sharedSecret, clusterKeyPath, log)
+			if err == nil {
+				log.Info().Msg("Successfully provisioned cluster keys from peer.")
+				return
+			}
+			log.Warn().Err(err).Str("peer", r.Beacon.Hostname).Msg("Failed to pull keys from peer, trying next...")
+		}
+	}
+}
+
+func broadcastAll(conn *net.UDPConn, targets []rangeTarget, secret string, db *store.Store, log zerolog.Logger) {
+	for _, t := range targets {
+		broadcastOne(conn, t, secret, db, log)
+	}
+}
+
+func broadcastOne(conn *net.UDPConn, target rangeTarget, secret string, db *store.Store, log zerolog.Logger) {
 	info, err := sysinfo.Collect(target.networkRange)
 	if err != nil {
 		log.Error().Err(err).Str("range", target.networkRange).Msg("Failed to collect system info for broadcast")
 		return
 	}
+
+	// Get the local cluster MACs to broadcast to peers
+	clusterMACs, _ := db.GetClusterMACs()
 
 	payload := &beacon.BeaconPayload{
 		Version:    1,
@@ -137,6 +234,7 @@ func broadcastOne(conn *net.UDPConn, target rangeTarget, secret string, log zero
 			MemoryGB:  info.MemoryGB,
 			DiskCount: info.DiskCount,
 		},
+		ClusterMACs: clusterMACs,
 	}
 
 	data, err := msgpack.Marshal(payload)
@@ -153,6 +251,10 @@ func broadcastOne(conn *net.UDPConn, target rangeTarget, secret string, log zero
 		log.Error().Err(err).Str("target", target.broadcastAddr.String()).Msg("Failed to send broadcast beacon")
 		return
 	}
+
+	// Refresh local node's own DB record so it always appears Active in cluster list.
+	// (Self-beacons are dropped by the listener to avoid loops — so we do it here.)
+	db.Upsert(*payload)
 
 	log.Debug().
 		Str("target", target.broadcastAddr.String()).

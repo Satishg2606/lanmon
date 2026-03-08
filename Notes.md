@@ -11,8 +11,7 @@ Ignores beacons from self (by MAC address)
 │  broadcast+listen│ ◂───────────────────────────────│  broadcast+listen│
 └─────────────────┘         UDP broadcast          └─────────────────┘
 
-
-
+Log server :- 10.51.241.84
 
 [node]
   network_range   = "10.51.240.0/23"

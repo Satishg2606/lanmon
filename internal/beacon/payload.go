@@ -3,13 +3,14 @@ package beacon
 
 // BeaconPayload is the data broadcast by each agent over UDP multicast.
 type BeaconPayload struct {
-	Version    uint8  `msgpack:"version"`
-	Timestamp  int64  `msgpack:"timestamp"`
-	MACAddress string `msgpack:"mac_address"`
-	IPAddress  string `msgpack:"ip_address"`
-	Hostname   string `msgpack:"hostname"`
-	OS         OSInfo `msgpack:"os"`
-	Hardware   HWInfo `msgpack:"hardware"`
+	Version     uint8    `msgpack:"version"`
+	Timestamp   int64    `msgpack:"timestamp"`
+	MACAddress  string   `msgpack:"mac_address"`
+	IPAddress   string   `msgpack:"ip_address"`
+	Hostname    string   `msgpack:"hostname"`
+	OS          OSInfo   `msgpack:"os"`
+	Hardware    HWInfo   `msgpack:"hardware"`
+	ClusterMACs []string `msgpack:"cluster_macs,omitempty"`
 }
 
 // OSInfo holds operating system metadata.

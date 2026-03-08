@@ -23,7 +23,7 @@ func Run(configPath string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	log := logger.Init(cfg.Node.LogLevel)
+	log := logger.Init(cfg.Node.LogLevel, cfg.Node.LogFile)
 
 	if cfg.Node.SharedSecret == "" || cfg.Node.SharedSecret == "CHANGE_ME" {
 		return fmt.Errorf("shared_secret must be set in config (not 'CHANGE_ME')")
@@ -56,7 +56,7 @@ func Run(configPath string) error {
 	db.RunExpiry(5*time.Minute, staleThreshold)
 
 	// Start RPC server
-	if err := rpc.StartServer(cfg.Node.RPCSocket, db, log); err != nil {
+	if err := rpc.StartServer(cfg.Node.RPCSocket, db, log, cfg.Node.SharedSecret, cfg.Connect.ClusterKey); err != nil {
 		return fmt.Errorf("starting RPC server: %w", err)
 	}
 

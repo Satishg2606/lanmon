@@ -28,6 +28,10 @@
   # Logging level (debug, info, warn, error)
   log_level       = "info"
 
+  # Path to a separate log file (in addition to stderr). Leave empty to log to console only.
+  # Example: log_file = "/var/log/lanmon/lanmon.log"
+  log_file        = ""
+
 [connect]
   # Path to RPC socket of the local node
   rpc_socket     = "/run/lanmon/server.sock"
@@ -38,3 +42,14 @@
   # Path to LANmon's own known_hosts for SSH key verification
   # This is separate from ~/.ssh/known_hosts and used exclusively by LANmon.
   known_hosts    = "/etc/lanmon/known_hosts"
+
+  # Path to the shared cluster SSH key pair (private key; .pub will be generated alongside)
+  cluster_key    = "/etc/lanmon/cluster_id_rsa"
+
+  # Path to lanmon binary on remote nodes (used for cluster sync commands)
+  # Must match where lanmon is installed on all cluster peers.
+  lanmon_bin     = "lanmon"
+
+  # Systemd service name managed by 'lanmon service start/stop/restart/status'.
+  # Omit .service suffix — it is added automatically.
+  service_name   = "lanmon"

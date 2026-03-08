@@ -1,0 +1,17 @@
+[90m2026-03-06T18:48:20+05:30[0m [32mINF[0m [1mRPC server started[0m [36msocket=[0m/run/lanmon/server.sock
+[90m2026-03-06T18:48:20+05:30[0m [32mINF[0m [1mNetwork RPC server started[0m [36maddr=[0m:9876
+[90m2026-03-06T18:48:20+05:30[0m [32mINF[0m [1mStarting LANNode P2P Discovery[0m [36mdb_path=[0m/var/lib/lanmon/hosts.db [36mnetwork_ranges=[0m["10.51.240.0/23"]
+[90m2026-03-06T18:48:20+05:30[0m [32mINF[0m [1mNetwork range configured[0m [36mbroadcast=[0m10.51.241.255:5678 [36minterface_ip=[0m10.51.240.55 [36mmac=[0ma4:bf:01:2d:5b:b6 [36mrange=[0m10.51.240.0/23
+[90m2026-03-06T18:48:20+05:30[0m [32mINF[0m [1mP2P Discovery node started[0m [36minterval=[0m10000 [36mport=[0m5678 [36mranges=[0m1
+[90m2026-03-06T18:52:30+05:30[0m [32mINF[0m [1mPeer discovered[0m [36mhostname=[0msatish-zbs0058s [36mip=[0m10.51.240.182
+[90m2026-03-06T18:52:30+05:30[0m [32mINF[0m [1mNew host discovered[0m [36mhostname=[0msatish-zbs0058s [36mip=[0m10.51.240.182 [36mmac=[0mac:45:ef:2b:61:5a [36mos=[0m"Ubuntu 24.04.3 LTS"
+[90m2026-03-06T18:52:35+05:30[0m [32mINF[0m [1mQuorum: adopting cluster addition from secret-validated peer[0m [36mhostname=[0msatish-zbs0058s [36mmac=[0mac:45:ef:2b:61:5a
+[90m2026-03-06T18:52:40+05:30[0m [32mINF[0m [1mPeer discovered[0m [36mhostname=[0msatish-zbs0058s [36mip=[0m10.51.240.182
+[90m2026-03-06T18:52:50+05:30[0m [32mINF[0m [1mPeer discovered[0m [36mhostname=[0msatish-zbs0058s [36mip=[0m10.51.240.182
+[90m2026-03-06T18:53:00+05:30[0m [32mINF[0m [1mPeer discovered[0m [36mhostname=[0msatish-zbs0058s [36mip=[0m10.51.240.182
+[90m2026-03-06T18:53:10+05:30[0m [32mINF[0m [1mPeer discovered[0m [36mhostname=[0msatish-zbs0058s [36mip=[0m10.51.240.182
+[90m2026-03-06T18:53:20+05:30[0m [32mINF[0m [1mPeer discovered[0m [36mhostname=[0msatish-zbs0058s [36mip=[0m10.51.240.182
+[90m2026-03-06T18:53:30+05:30[0m [32mINF[0m [1mPeer discovered[0m [36mhostname=[0msatish-zbs0058s [36mip=[0m10.51.240.182
+[90m2026-03-06T18:53:40+05:30[0m [32mINF[0m [1mPeer discovered[0m [36mhostname=[0msatish-zbs0058s [36mip=[0m10.51.240.182
+[90m2026-03-06T18:53:50+05:30[0m [32mINF[0m [1mPeer discovered[0m [36mhostname=[0msatish-zbs0058s [36mip=[0m10.51.240.182
+[90m2026-03-06T18:54:00+05:30[0m [32mINF[0m [1mPeer discovered[0m [36mhostname=[0msatish-zbs0058s [36mip=[0m10.51.240.182
