@@ -16,8 +16,8 @@
   # Change this to a secure random hex string!
   shared_secret   = "ae0e843d4991a2351120a9d6d4ea541b4361a3623f2ce48555270f875e1e0025"
   
-  # Path to host database
-  db_path         = "/var/lib/lanmon/hosts.db"
+  # rqlite database URL (rqlite must be running at this address)
+  rqlite_url      = "http://localhost:4001"
   
   # Path to Unix socket for RPC communication (used by 'connect' command)
   rpc_socket      = "/run/lanmon/server.sock"

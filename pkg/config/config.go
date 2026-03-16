@@ -24,7 +24,7 @@ type NodeConfig struct {
 	Port           int      `toml:"port"`
 	Interval       string   `toml:"interval"`
 	SharedSecret   string   `toml:"shared_secret"`
-	DBPath         string   `toml:"db_path"`
+	RqliteURL      string   `toml:"rqlite_url"`
 	RPCSocket      string   `toml:"rpc_socket"`
 	StaleThreshold string   `toml:"stale_threshold"`
 	LogLevel       string   `toml:"log_level"`
@@ -78,7 +78,7 @@ func (cfg *Config) expandPaths() {
 	cfg.Connect.ServerPubKey = ExpandPath(cfg.Connect.ServerPubKey)
 	cfg.Connect.KnownHosts = ExpandPath(cfg.Connect.KnownHosts)
 	cfg.Connect.ClusterKey = ExpandPath(cfg.Connect.ClusterKey)
-	cfg.Node.DBPath = ExpandPath(cfg.Node.DBPath)
+	// RqliteURL is a URL, not a path — no expansion needed
 	cfg.Node.LogFile = ExpandPath(cfg.Node.LogFile)
 }
 
@@ -109,8 +109,8 @@ func applyDefaults(cfg *Config) {
 	if cfg.Node.Interval == "" {
 		cfg.Node.Interval = "30s"
 	}
-	if cfg.Node.DBPath == "" {
-		cfg.Node.DBPath = "/var/lib/lanmon/hosts.db"
+	if cfg.Node.RqliteURL == "" {
+		cfg.Node.RqliteURL = "http://localhost:4001"
 	}
 	if cfg.Node.RPCSocket == "" {
 		cfg.Node.RPCSocket = "/run/lanmon/server.sock"

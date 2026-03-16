@@ -1,19 +1,16 @@
-// Package store provides a BoltDB-backed host record store for lanmon.
+// Package store provides an rqlite-backed host record store for lanmon.
 package store
 
 import (
 	"encoding/json"
 	"fmt"
-	"sync"
 	"time"
 
+	"github.com/rqlite/gorqlite"
 	"github.com/rs/zerolog"
-	bolt "go.etcd.io/bbolt"
 
 	"lanmon/internal/beacon"
 )
-
-var hostsBucket = []byte("hosts")
 
 // HostRecord represents a discovered host in the database.
 type HostRecord struct {
@@ -28,111 +25,252 @@ type HostRecord struct {
 	PeerClusterMACs []string             `json:"peer_cluster_macs,omitempty"`
 }
 
-// Store wraps a bbolt database for host records.
+// Store wraps an rqlite connection for host records.
 type Store struct {
-	db  *bolt.DB
-	mu  sync.RWMutex
-	log zerolog.Logger
+	conn *gorqlite.Connection
+	log  zerolog.Logger
 }
 
-// New opens or creates a BoltDB file at the given path.
-func New(path string, log zerolog.Logger) (*Store, error) {
-	db, err := bolt.Open(path, 0600, &bolt.Options{Timeout: 5 * time.Second})
+const createTableSQL = `CREATE TABLE IF NOT EXISTS hosts (
+	mac              TEXT PRIMARY KEY,
+	ip               TEXT NOT NULL,
+	hostname         TEXT NOT NULL,
+	os_json          TEXT NOT NULL DEFAULT '{}',
+	hw_json          TEXT NOT NULL DEFAULT '{}',
+	cluster_macs     TEXT NOT NULL DEFAULT '[]',
+	beacon_version   INTEGER NOT NULL DEFAULT 0,
+	beacon_timestamp INTEGER NOT NULL DEFAULT 0,
+	first_seen       TEXT NOT NULL,
+	last_seen        TEXT NOT NULL,
+	packet_count     INTEGER NOT NULL DEFAULT 0,
+	ssh_key_pushed   INTEGER NOT NULL DEFAULT 0,
+	ssh_key_pushed_at TEXT,
+	active           INTEGER NOT NULL DEFAULT 1,
+	is_in_cluster    INTEGER NOT NULL DEFAULT 0
+)`
+
+// New opens a connection to rqlite at the given URL and ensures the hosts table exists.
+func New(rqliteURL string, log zerolog.Logger) (*Store, error) {
+	conn, err := gorqlite.Open(rqliteURL)
 	if err != nil {
-		return nil, fmt.Errorf("opening database %s: %w", path, err)
+		return nil, fmt.Errorf("connecting to rqlite at %s: %w", rqliteURL, err)
 	}
 
-	// Ensure the hosts bucket exists
-	err = db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists(hostsBucket)
-		return err
-	})
+	// Ensure the hosts table exists
+	_, err = conn.WriteOne(createTableSQL)
 	if err != nil {
-		db.Close()
-		return nil, fmt.Errorf("creating hosts bucket: %w", err)
+		conn.Close()
+		return nil, fmt.Errorf("creating hosts table: %w", err)
 	}
 
-	return &Store{db: db, log: log}, nil
+	return &Store{conn: conn, log: log}, nil
 }
 
-// Close closes the underlying BoltDB.
+// Close closes the underlying rqlite connection.
 func (s *Store) Close() error {
-	return s.db.Close()
+	s.conn.Close()
+	return nil
+}
+
+// boolToInt converts a Go bool to an SQLite integer (0/1).
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // Upsert inserts or updates a host record keyed by MAC address.
 func (s *Store) Upsert(payload beacon.BeaconPayload) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	now := time.Now()
 
-	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(hostsBucket)
-		key := []byte(payload.MACAddress)
+	// Check if the record already exists
+	qr, err := s.conn.QueryOneParameterized(
+		gorqlite.ParameterizedStatement{
+			Query:     "SELECT packet_count, first_seen FROM hosts WHERE mac = ?",
+			Arguments: []interface{}{payload.MACAddress},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("querying existing record: %w", err)
+	}
 
-		now := time.Now()
-		var record HostRecord
+	osJSON, err := json.Marshal(payload.OS)
+	if err != nil {
+		return fmt.Errorf("marshaling OS info: %w", err)
+	}
+	hwJSON, err := json.Marshal(payload.Hardware)
+	if err != nil {
+		return fmt.Errorf("marshaling HW info: %w", err)
+	}
+	clusterMACs, err := json.Marshal(payload.ClusterMACs)
+	if err != nil {
+		return fmt.Errorf("marshaling cluster MACs: %w", err)
+	}
+	// Ensure null slice serialization is "[]"
+	if payload.ClusterMACs == nil {
+		clusterMACs = []byte("[]")
+	}
 
-		existing := b.Get(key)
-		if existing != nil {
-			if err := json.Unmarshal(existing, &record); err != nil {
-				s.log.Warn().Err(err).Str("mac", payload.MACAddress).Msg("Failed to unmarshal existing record, overwriting")
-			}
-			record.Beacon = payload
-			record.LastSeen = now
-			record.PacketCount++
-			record.Active = true
-			record.PeerClusterMACs = payload.ClusterMACs
+	nowStr := now.Format(time.RFC3339Nano)
 
-			s.log.Debug().
-				Str("mac", payload.MACAddress).
-				Str("hostname", payload.Hostname).
-				Msg("Host updated")
-		} else {
-			record = HostRecord{
-				Beacon:          payload,
-				FirstSeen:       now,
-				LastSeen:        now,
-				PacketCount:     1,
-				Active:          true,
-				PeerClusterMACs: payload.ClusterMACs,
-			}
-
-			s.log.Info().
-				Str("mac", payload.MACAddress).
-				Str("hostname", payload.Hostname).
-				Str("ip", payload.IPAddress).
-				Str("os", payload.OS.Name).
-				Msg("New host discovered")
+	if qr.NumRows() > 0 && qr.Next() {
+		// Existing record — update
+		var packetCount int64
+		var firstSeenStr string
+		if err := qr.Scan(&packetCount, &firstSeenStr); err != nil {
+			return fmt.Errorf("scanning existing record: %w", err)
 		}
 
-		data, err := json.Marshal(record)
+		packetCount++
+
+		_, err = s.conn.WriteOneParameterized(
+			gorqlite.ParameterizedStatement{
+				Query: `UPDATE hosts SET
+					ip = ?, hostname = ?, os_json = ?, hw_json = ?, cluster_macs = ?,
+					beacon_version = ?, beacon_timestamp = ?,
+					last_seen = ?, packet_count = ?, active = 1
+					WHERE mac = ?`,
+				Arguments: []interface{}{
+					payload.IPAddress, payload.Hostname,
+					string(osJSON), string(hwJSON), string(clusterMACs),
+					payload.Version, payload.Timestamp,
+					nowStr, packetCount,
+					payload.MACAddress,
+				},
+			},
+		)
 		if err != nil {
-			return fmt.Errorf("marshaling host record: %w", err)
+			return fmt.Errorf("updating host record: %w", err)
 		}
 
-		return b.Put(key, data)
-	})
+		s.log.Debug().
+			Str("mac", payload.MACAddress).
+			Str("hostname", payload.Hostname).
+			Msg("Host updated")
+	} else {
+		// New record — insert
+		_, err = s.conn.WriteOneParameterized(
+			gorqlite.ParameterizedStatement{
+				Query: `INSERT INTO hosts (mac, ip, hostname, os_json, hw_json, cluster_macs,
+					beacon_version, beacon_timestamp, first_seen, last_seen,
+					packet_count, ssh_key_pushed, active, is_in_cluster)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 1, 0)`,
+				Arguments: []interface{}{
+					payload.MACAddress, payload.IPAddress, payload.Hostname,
+					string(osJSON), string(hwJSON), string(clusterMACs),
+					payload.Version, payload.Timestamp,
+					nowStr, nowStr,
+				},
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("inserting host record: %w", err)
+		}
+
+		s.log.Info().
+			Str("mac", payload.MACAddress).
+			Str("hostname", payload.Hostname).
+			Str("ip", payload.IPAddress).
+			Str("os", payload.OS.Name).
+			Msg("New host discovered")
+	}
+
+	return nil
+}
+
+// scanRecord converts a QueryResult row into a HostRecord.
+// The caller must have called Next() before calling this.
+func scanRecord(qr gorqlite.QueryResult) (HostRecord, error) {
+	var (
+		mac, ip, hostname                    string
+		osJSON, hwJSON, clusterMACs          string
+		beaconVersion                        int64
+		beaconTimestamp                      int64
+		firstSeenStr, lastSeenStr            string
+		packetCount                          int64
+		sshKeyPushed, active, isInCluster    int64
+		sshKeyPushedAtStr                    gorqlite.NullString
+	)
+
+	err := qr.Scan(
+		&mac, &ip, &hostname,
+		&osJSON, &hwJSON, &clusterMACs,
+		&beaconVersion, &beaconTimestamp,
+		&firstSeenStr, &lastSeenStr,
+		&packetCount,
+		&sshKeyPushed, &sshKeyPushedAtStr,
+		&active, &isInCluster,
+	)
+	if err != nil {
+		return HostRecord{}, fmt.Errorf("scanning row: %w", err)
+	}
+
+	var osInfo beacon.OSInfo
+	if err := json.Unmarshal([]byte(osJSON), &osInfo); err != nil {
+		return HostRecord{}, fmt.Errorf("unmarshaling os_json: %w", err)
+	}
+	var hwInfo beacon.HWInfo
+	if err := json.Unmarshal([]byte(hwJSON), &hwInfo); err != nil {
+		return HostRecord{}, fmt.Errorf("unmarshaling hw_json: %w", err)
+	}
+	var peerMACs []string
+	if err := json.Unmarshal([]byte(clusterMACs), &peerMACs); err != nil {
+		return HostRecord{}, fmt.Errorf("unmarshaling cluster_macs: %w", err)
+	}
+
+	firstSeen, _ := time.Parse(time.RFC3339Nano, firstSeenStr)
+	lastSeen, _ := time.Parse(time.RFC3339Nano, lastSeenStr)
+
+	record := HostRecord{
+		Beacon: beacon.BeaconPayload{
+			Version:     uint8(beaconVersion),
+			Timestamp:   beaconTimestamp,
+			MACAddress:  mac,
+			IPAddress:   ip,
+			Hostname:    hostname,
+			OS:          osInfo,
+			Hardware:    hwInfo,
+			ClusterMACs: peerMACs,
+		},
+		FirstSeen:       firstSeen,
+		LastSeen:        lastSeen,
+		PacketCount:     uint64(packetCount),
+		SSHKeyPushed:    sshKeyPushed != 0,
+		Active:          active != 0,
+		IsInCluster:     isInCluster != 0,
+		PeerClusterMACs: peerMACs,
+	}
+
+	if sshKeyPushedAtStr.Valid {
+		t, err := time.Parse(time.RFC3339Nano, sshKeyPushedAtStr.String)
+		if err == nil {
+			record.SSHKeyPushedAt = &t
+		}
+	}
+
+	return record, nil
 }
 
 // GetAll returns all host records.
 func (s *Store) GetAll() ([]HostRecord, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	qr, err := s.conn.QueryOne(
+		"SELECT mac, ip, hostname, os_json, hw_json, cluster_macs, beacon_version, beacon_timestamp, first_seen, last_seen, packet_count, ssh_key_pushed, ssh_key_pushed_at, active, is_in_cluster FROM hosts",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying all hosts: %w", err)
+	}
 
 	var records []HostRecord
-	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(hostsBucket)
-		return b.ForEach(func(k, v []byte) error {
-			var record HostRecord
-			if err := json.Unmarshal(v, &record); err != nil {
-				s.log.Warn().Err(err).Str("key", string(k)).Msg("Skipping corrupt record")
-				return nil
-			}
-			records = append(records, record)
-			return nil
-		})
-	})
-	return records, err
+	for qr.Next() {
+		record, err := scanRecord(qr)
+		if err != nil {
+			s.log.Warn().Err(err).Msg("Skipping corrupt record")
+			continue
+		}
+		records = append(records, record)
+	}
+	return records, nil
 }
 
 // GetActive returns only active host records.
@@ -153,41 +291,47 @@ func (s *Store) GetActive() ([]HostRecord, error) {
 
 // MarkClusterNode marks or unmarks a host as a cluster member.
 func (s *Store) MarkClusterNode(mac string, inCluster bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	activeVal := 0
+	if inCluster {
+		activeVal = 1
+	}
 
-	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(hostsBucket)
-		key := []byte(mac)
+	_, err := s.conn.WriteOneParameterized(
+		gorqlite.ParameterizedStatement{
+			Query:     "UPDATE hosts SET is_in_cluster = ?, active = CASE WHEN ? = 1 THEN 1 ELSE active END WHERE mac = ?",
+			Arguments: []interface{}{boolToInt(inCluster), activeVal, mac},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("updating cluster membership for %s: %w", mac, err)
+	}
 
-		existing := b.Get(key)
-		if existing == nil {
-			return fmt.Errorf("host %s not found", mac)
-		}
+	// Verify the row existed
+	qr, err := s.conn.QueryOneParameterized(
+		gorqlite.ParameterizedStatement{
+			Query:     "SELECT hostname FROM hosts WHERE mac = ?",
+			Arguments: []interface{}{mac},
+		},
+	)
+	if err != nil {
+		return err
+	}
+	if qr.NumRows() == 0 {
+		return fmt.Errorf("host %s not found", mac)
+	}
 
-		var record HostRecord
-		if err := json.Unmarshal(existing, &record); err != nil {
-			return fmt.Errorf("unmarshaling record: %w", err)
-		}
+	var hostname string
+	if qr.Next() {
+		qr.Scan(&hostname)
+	}
 
-		record.IsInCluster = inCluster
-		if inCluster {
-			record.Active = true // Ensure node is considered active if in cluster
-		}
+	s.log.Info().
+		Str("mac", mac).
+		Str("hostname", hostname).
+		Bool("in_cluster", inCluster).
+		Msg("Cluster membership updated")
 
-		data, err := json.Marshal(record)
-		if err != nil {
-			return fmt.Errorf("marshaling record: %w", err)
-		}
-
-		s.log.Info().
-			Str("mac", mac).
-			Str("hostname", record.Beacon.Hostname).
-			Bool("in_cluster", inCluster).
-			Msg("Cluster membership updated")
-
-		return b.Put(key, data)
-	})
+	return nil
 }
 
 // GetClusterNodes returns only nodes marked as cluster members.
@@ -208,39 +352,42 @@ func (s *Store) GetClusterNodes() ([]HostRecord, error) {
 
 // MarkKeyPushed marks a host's SSH key as pushed.
 func (s *Store) MarkKeyPushed(mac string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Verify the row exists first
+	qr, err := s.conn.QueryOneParameterized(
+		gorqlite.ParameterizedStatement{
+			Query:     "SELECT hostname FROM hosts WHERE mac = ?",
+			Arguments: []interface{}{mac},
+		},
+	)
+	if err != nil {
+		return err
+	}
+	if qr.NumRows() == 0 {
+		return fmt.Errorf("host %s not found", mac)
+	}
 
-	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(hostsBucket)
-		key := []byte(mac)
+	var hostname string
+	if qr.Next() {
+		qr.Scan(&hostname)
+	}
 
-		existing := b.Get(key)
-		if existing == nil {
-			return fmt.Errorf("host %s not found", mac)
-		}
+	now := time.Now().Format(time.RFC3339Nano)
+	_, err = s.conn.WriteOneParameterized(
+		gorqlite.ParameterizedStatement{
+			Query:     "UPDATE hosts SET ssh_key_pushed = 1, ssh_key_pushed_at = ? WHERE mac = ?",
+			Arguments: []interface{}{now, mac},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("marking key pushed for %s: %w", mac, err)
+	}
 
-		var record HostRecord
-		if err := json.Unmarshal(existing, &record); err != nil {
-			return fmt.Errorf("unmarshaling record: %w", err)
-		}
+	s.log.Info().
+		Str("mac", mac).
+		Str("hostname", hostname).
+		Msg("SSH key pushed")
 
-		now := time.Now()
-		record.SSHKeyPushed = true
-		record.SSHKeyPushedAt = &now
-
-		data, err := json.Marshal(record)
-		if err != nil {
-			return fmt.Errorf("marshaling record: %w", err)
-		}
-
-		s.log.Info().
-			Str("mac", mac).
-			Str("hostname", record.Beacon.Hostname).
-			Msg("SSH key pushed")
-
-		return b.Put(key, data)
-	})
+	return nil
 }
 
 // RunExpiry starts a background goroutine that marks hosts as inactive
@@ -257,39 +404,42 @@ func (s *Store) RunExpiry(checkInterval, threshold time.Duration) {
 }
 
 func (s *Store) expireStaleHosts(threshold time.Duration) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	cutoff := time.Now().Add(-threshold).Format(time.RFC3339Nano)
 
-	cutoff := time.Now().Add(-threshold)
-
-	err := s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(hostsBucket)
-		return b.ForEach(func(k, v []byte) error {
-			var record HostRecord
-			if err := json.Unmarshal(v, &record); err != nil {
-				return nil
-			}
-
-			if record.Active && record.LastSeen.Before(cutoff) {
-				record.Active = false
-
-				s.log.Info().
-					Str("mac", record.Beacon.MACAddress).
-					Str("hostname", record.Beacon.Hostname).
-					Time("last_seen", record.LastSeen).
-					Msg("Host marked inactive")
-
-				data, err := json.Marshal(record)
-				if err != nil {
-					return nil
-				}
-				return b.Put(k, data)
-			}
-			return nil
-		})
-	})
+	// Get hosts that will be marked inactive (for logging)
+	qr, err := s.conn.QueryOneParameterized(
+		gorqlite.ParameterizedStatement{
+			Query:     "SELECT mac, hostname, last_seen FROM hosts WHERE active = 1 AND last_seen < ?",
+			Arguments: []interface{}{cutoff},
+		},
+	)
 	if err != nil {
-		s.log.Error().Err(err).Msg("Database error during expiry check")
+		s.log.Error().Err(err).Msg("Database error during expiry check (query)")
+		return
+	}
+
+	for qr.Next() {
+		var mac, hostname, lastSeenStr string
+		if err := qr.Scan(&mac, &hostname, &lastSeenStr); err != nil {
+			continue
+		}
+		lastSeen, _ := time.Parse(time.RFC3339Nano, lastSeenStr)
+		s.log.Info().
+			Str("mac", mac).
+			Str("hostname", hostname).
+			Time("last_seen", lastSeen).
+			Msg("Host marked inactive")
+	}
+
+	// Mark them inactive
+	_, err = s.conn.WriteOneParameterized(
+		gorqlite.ParameterizedStatement{
+			Query:     "UPDATE hosts SET active = 0 WHERE active = 1 AND last_seen < ?",
+			Arguments: []interface{}{cutoff},
+		},
+	)
+	if err != nil {
+		s.log.Error().Err(err).Msg("Database error during expiry check (update)")
 	}
 }
 
@@ -308,8 +458,6 @@ func (s *Store) GetClusterMACs() ([]string, error) {
 
 // RunQuorum starts a background goroutine that runs every `interval` to evaluate
 // cluster membership based on what active peers report in their beacons.
-// Each active peer "votes" for the MACs it lists in PeerClusterMACs.
-// A MAC is considered in the cluster if more than half of voters agree.
 // Returns a channel of removed MACs for external cleanup.
 func (s *Store) RunQuorum(interval time.Duration) <-chan []string {
 	removedCh := make(chan []string, 1)
@@ -334,121 +482,86 @@ func (s *Store) RunQuorum(interval time.Duration) <-chan []string {
 // evaluateQuorum counts votes from all active peers and the local node,
 // then updates IsInCluster flags. Returns MACs that were removed from cluster.
 func (s *Store) evaluateQuorum() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	var removed []string
 
-	err := s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(hostsBucket)
+	all, err := s.GetAll()
+	if err != nil {
+		s.log.Error().Err(err).Msg("Database error during quorum evaluation (get all)")
+		return removed
+	}
 
-		// Step 1: Collect all records and their votes
-		var allRecords []HostRecord
-		var allKeys [][]byte
+	// Step 1: Count votes — each active peer's PeerClusterMACs list is one vote
+	votes := make(map[string]int)
+	voterCount := 0
 
-		err := b.ForEach(func(k, v []byte) error {
-			var record HostRecord
-			if err := json.Unmarshal(v, &record); err != nil {
-				return nil
-			}
-			allRecords = append(allRecords, record)
-			keyCopy := make([]byte, len(k))
-			copy(keyCopy, k)
-			allKeys = append(allKeys, keyCopy)
-			return nil
-		})
-		if err != nil {
-			return err
+	for _, r := range all {
+		if !r.Active {
+			continue
 		}
-
-		// Step 2: Count votes — each active peer's PeerClusterMACs list is one vote
-		// Also include the local node's own cluster list (its IsInCluster flags)
-		votes := make(map[string]int) // MAC -> vote count
-		voterCount := 0
-
-		for _, r := range allRecords {
-			if !r.Active {
-				continue
-			}
-			// This peer's vote
-			if len(r.PeerClusterMACs) > 0 {
-				voterCount++
-				for _, mac := range r.PeerClusterMACs {
-					votes[mac]++
-				}
-			}
-		}
-
-		// The local node also votes (its own IsInCluster knowledge)
-		// Collect the local cluster list as a vote
-		localClusterMACs := []string{}
-		for _, r := range allRecords {
-			if r.IsInCluster {
-				localClusterMACs = append(localClusterMACs, r.Beacon.MACAddress)
-			}
-		}
-		if len(localClusterMACs) > 0 {
+		if len(r.PeerClusterMACs) > 0 {
 			voterCount++
-			for _, mac := range localClusterMACs {
+			for _, mac := range r.PeerClusterMACs {
 				votes[mac]++
 			}
 		}
+	}
 
-		// If no voters, nothing to do
-		if voterCount == 0 {
-			return nil
+	// The local node also votes (its own IsInCluster knowledge)
+	localClusterMACs := []string{}
+	for _, r := range all {
+		if r.IsInCluster {
+			localClusterMACs = append(localClusterMACs, r.Beacon.MACAddress)
 		}
-
-		// Step 3: Approval Adoption — if any active peer (already HMAC-validated)
-		// reports a MAC in its ClusterMACs, we automatically adopt it.
-		// This ensures that a single "lanmon cluster add" propagates cluster-wide.
-		trustedVotes := make(map[string]bool) // MACs vouched for by valid peers
-		for _, r := range allRecords {
-			// We trust any active peer because they must have the shared_secret to pass HMAC validation
-			if !r.Active {
-				continue
-			}
-			for _, mac := range r.PeerClusterMACs {
-				trustedVotes[mac] = true
-			}
+	}
+	if len(localClusterMACs) > 0 {
+		voterCount++
+		for _, mac := range localClusterMACs {
+			votes[mac]++
 		}
+	}
 
-		// Build a lookup of existing records by MAC for quick access
-		recordByMAC := make(map[string]int)
-		for i, r := range allRecords {
-			recordByMAC[r.Beacon.MACAddress] = i
+	// If no voters, nothing to do
+	if voterCount == 0 {
+		return removed
+	}
+
+	// Step 2: Approval Adoption — if any active peer (already HMAC-validated)
+	// reports a MAC in its ClusterMACs, we automatically adopt it.
+	trustedVotes := make(map[string]bool)
+	for _, r := range all {
+		if !r.Active {
+			continue
 		}
-
-		// Adopt additions from peers. 
-		// If WE are the one who just received the cluster approval from ANYONE who has the secret, we join.
-		for mac := range trustedVotes {
-			idx, exists := recordByMAC[mac]
-			if !exists {
-				continue 
-			}
-			if !allRecords[idx].IsInCluster {
-				s.log.Info().
-					Str("mac", mac).
-					Str("hostname", allRecords[idx].Beacon.Hostname).
-					Msg("Quorum: adopting cluster addition from secret-validated peer")
-				allRecords[idx].IsInCluster = true
-				allRecords[idx].Active = true // Force active if in cluster
-				data, err := json.Marshal(allRecords[idx])
-				if err != nil {
-					continue
-				}
-				b.Put(allKeys[idx], data)
-			}
+		for _, mac := range r.PeerClusterMACs {
+			trustedVotes[mac] = true
 		}
+	}
 
-		// Note: We no longer perform automatic eviction (removal) based on majority vote.
-		// Removals must be explicit via 'lanmon cluster remove', which then propagates via RPC push.
+	// Build a lookup of existing records by MAC
+	recordByMAC := make(map[string]int)
+	for i, r := range all {
+		recordByMAC[r.Beacon.MACAddress] = i
+	}
 
-		return nil
-	})
+	// Adopt additions from peers
+	for mac := range trustedVotes {
+		idx, exists := recordByMAC[mac]
+		if !exists {
+			continue
+		}
+		if !all[idx].IsInCluster {
+			s.log.Info().
+				Str("mac", mac).
+				Str("hostname", all[idx].Beacon.Hostname).
+				Msg("Quorum: adopting cluster addition from secret-validated peer")
 
-	if err != nil {
-		s.log.Error().Err(err).Msg("Database error during quorum evaluation")
+			s.conn.WriteOneParameterized(
+				gorqlite.ParameterizedStatement{
+					Query:     "UPDATE hosts SET is_in_cluster = 1, active = 1 WHERE mac = ?",
+					Arguments: []interface{}{mac},
+				},
+			)
+		}
 	}
 
 	return removed

@@ -16,7 +16,7 @@ func TestLoad_ValidConfig(t *testing.T) {
   port = 5678
   interval = "30s"
   shared_secret = "my-secret"
-  db_path = "/tmp/test.db"
+  rqlite_url = "http://localhost:4001"
   rpc_socket = "/tmp/test.sock"
   stale_threshold = "90s"
   log_level = "debug"
@@ -41,8 +41,8 @@ func TestLoad_ValidConfig(t *testing.T) {
 	if cfg.Node.SharedSecret != "my-secret" {
 		t.Errorf("Node.SharedSecret: got %s, want my-secret", cfg.Node.SharedSecret)
 	}
-	if cfg.Node.DBPath != "/tmp/test.db" {
-		t.Errorf("Node.DBPath: got %s, want /tmp/test.db", cfg.Node.DBPath)
+	if cfg.Node.RqliteURL != "http://localhost:4001" {
+		t.Errorf("Node.RqliteURL: got %s, want http://localhost:4001", cfg.Node.RqliteURL)
 	}
 	if cfg.Node.LogLevel != "debug" {
 		t.Errorf("Node.LogLevel: got %s, want debug", cfg.Node.LogLevel)

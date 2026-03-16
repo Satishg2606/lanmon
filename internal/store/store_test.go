@@ -1,8 +1,6 @@
 package store
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,17 +13,19 @@ func testLogger() zerolog.Logger {
 	return zerolog.Nop()
 }
 
+const testRqliteURL = "http://localhost:4001"
+
 func testStore(t *testing.T) (*Store, func()) {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-	s, err := New(dbPath, testLogger())
+	s, err := New(testRqliteURL, testLogger())
 	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
+		t.Skipf("rqlite not available at %s: %v", testRqliteURL, err)
 	}
+	// Clean the hosts table before each test
+	s.conn.WriteOne("DELETE FROM hosts")
 	return s, func() {
+		s.conn.WriteOne("DELETE FROM hosts")
 		s.Close()
-		os.Remove(dbPath)
 	}
 }
 

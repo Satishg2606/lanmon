@@ -26,8 +26,8 @@
   port            = 5678
   # Must match agent shared_secret
   shared_secret   = "ae0e843d4991a2351120a9d6d4ea541b4361a3623f2ce48555270f875e1e0025"
-  # Path to BoltDB database file
-  db_path         = "/var/lib/lanmon/hosts.db"
+  # rqlite database URL
+  rqlite_url      = "http://localhost:4001"
   # Unix socket for IPC with 'lanmon connect'
   rpc_socket      = "/run/lanmon/server.sock"
   # Mark host inactive if no beacon received within this duration

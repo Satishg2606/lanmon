@@ -1,0 +1,13 @@
+[Unit]
+Description=rqlite node
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/rqlited /var/lib/rqlite
+Restart=on-failure
+RestartSec=10s
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

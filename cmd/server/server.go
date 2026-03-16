@@ -29,11 +29,7 @@ func Run(configPath string) error {
 		return fmt.Errorf("shared_secret must be set in config (not 'CHANGE_ME')")
 	}
 
-	// Ensure database directory exists
-	dbDir := filepath.Dir(cfg.Node.DBPath)
-	if err := os.MkdirAll(dbDir, 0700); err != nil {
-		return fmt.Errorf("creating database directory %s: %w", dbDir, err)
-	}
+	// rqlite manages its own storage — no directory creation needed
 
 	// Ensure RPC socket directory exists
 	sockDir := filepath.Dir(cfg.Node.RPCSocket)
@@ -42,7 +38,7 @@ func Run(configPath string) error {
 	}
 
 	// Open store
-	db, err := store.New(cfg.Node.DBPath, log)
+	db, err := store.New(cfg.Node.RqliteURL, log)
 	if err != nil {
 		return fmt.Errorf("opening store: %w", err)
 	}
@@ -61,7 +57,7 @@ func Run(configPath string) error {
 	}
 
 	log.Info().
-		Str("db_path", cfg.Node.DBPath).
+		Str("rqlite_url", cfg.Node.RqliteURL).
 		Str("rpc_socket", cfg.Node.RPCSocket).
 		Dur("stale_threshold", staleThreshold).
 		Msg("Starting legacy LANListener server (deprecated)")

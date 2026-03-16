@@ -1,8 +1,8 @@
 [Unit]
 Description=LANmon P2P Node Discovery Service
 Documentation=https://github.com/Satishg2606/lanmon
-After=network-online.target
-Wants=network-online.target
+After=network-online.target rqlite.service
+Wants=network-online.target rqlite.service
 
 [Service]
 Type=simple
