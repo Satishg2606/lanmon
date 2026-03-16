@@ -11,6 +11,10 @@
 # =============================================================================
 set -euo pipefail
 
+# Ensure /usr/local/go/bin is in PATH (common for manual Go installs)
+export PATH=$PATH:/usr/local/go/bin
+
+
 # ── Defaults ────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -65,7 +69,7 @@ if $DO_BUILD; then
   command -v go >/dev/null 2>&1 || die "Go is not installed. Install Go and try again."
   cd "$PROJECT_DIR"
   mkdir -p bin
-  go build -ldflags="-s -w" -o "$BINARY_SRC" main.go
+  CGO_ENABLED=0 go build -ldflags="-s -w" -o "$BINARY_SRC" main.go
   ok "Build complete: $BINARY_SRC ($(du -sh "$BINARY_SRC" | cut -f1))"
 else
   warn "Skipping build (--no-build)"
